@@ -51,6 +51,8 @@
               hasMore[room] = false;
             }
           }
+          // ── Mark initial load complete ──────────────────────────────────────
+          initialLoaded[room] = true;
         } else {
           // ── New real-time message ───────────────────────────────────────────
           const msgId = data.path.replace('/', '');
