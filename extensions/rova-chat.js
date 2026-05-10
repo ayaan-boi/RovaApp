@@ -89,7 +89,6 @@
     const path = getRoomPath(room);
     const oldest = oldestKey[room];
 
-    // If no oldest key (fresh or after clear), fetch most recent N messages
     const url = oldest
       ? `${FIREBASE_URL}/${path}/messages.json?orderBy="$key"&endBefore="${oldest}"&limitToLast=${count}`
       : `${FIREBASE_URL}/${path}/messages.json?orderBy="$key"&limitToLast=${count}`;
@@ -98,19 +97,22 @@
       const data = await res.json();
 
       if (!data || typeof data !== 'object' || Object.keys(data).length === 0) {
+        // Nothing came back — we have reached the very beginning
         hasMore[room] = false;
         return;
       }
 
       const arr = Object.entries(data)
         .map(([k, v]) => ({ id: k, ...v }))
-        .sort((a, b) => (a.time || 0) - (b.time || 0));
+        .sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
       roomMessages[room] = [...arr, ...(roomMessages[room] || [])];
-      if (arr.length > 0) oldestKey[room] = arr[0].id;
-      hasMore[room] = arr.length >= count;
+      oldestKey[room] = arr[0].id;
+      // Always assume there could be more until a fetch returns empty
+      hasMore[room] = true;
+
     } catch(e) {
-      hasMore[room] = false;
+      // On error, leave hasMore unchanged so user can retry
     }
   }
 
