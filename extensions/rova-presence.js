@@ -67,6 +67,11 @@
 
           // ── Setup ────────────────────────────────────────────────────────────
           {
+            opcode: "initPresence",
+            blockType: BlockType.COMMAND,
+            text: "initialize presence"
+          },
+          {
             opcode: "goOnline",
             blockType: BlockType.COMMAND,
             text: "go online as [USER]",
@@ -175,6 +180,10 @@
     }
 
     // ── Setup ──────────────────────────────────────────────────────────────────
+    async initPresence() {
+      await ensureSDK();
+    }
+
     async goOnline({ USER }) {
       await ensureSDK();
       myUsername = Cast.toString(USER);
