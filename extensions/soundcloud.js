@@ -366,12 +366,19 @@
       const url = SoundCloudAPI + "tracks/soundcloud:tracks:" + id + "?client_id=" + clientID;
       const response = await this._fetch(url, "T" + id);
       if (response) {
-        if (!response.downloadable) return "";
+        // Note: do NOT check response.downloadable — most tracks are streamable
+        // even when not marked as downloadable. We look for any progressive MP3.
         const media = response.media?.transcodings ?? [];
         const mediaData = media.find(m => m.format.mime_type === "audio/mpeg" && m.format.protocol === "progressive");
         if (mediaData) {
           const mp3Links = await this._fetch(mediaData.url + "?client_id=" + clientID, "TS" + id);
           return mp3Links?.url ?? "";
+        }
+        // Fall back to HLS if no progressive stream found
+        const hls = media.find(m => m.format.protocol === "hls");
+        if (hls) {
+          const hlsLinks = await this._fetch(hls.url + "?client_id=" + clientID, "TH" + id);
+          return hlsLinks?.url ?? "";
         }
       }
       return "fetch failed";
