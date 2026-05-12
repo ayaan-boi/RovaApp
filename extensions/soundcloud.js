@@ -181,8 +181,9 @@
           {
             opcode: "searchTracks",
             blockType: Scratch.BlockType.REPORTER,
-            text: "search for tracks using query [QUERY]",
+            text: "search for [NUM] tracks using query [QUERY]",
             arguments: {
+              NUM:   { type: Scratch.ArgumentType.NUMBER, defaultValue: 10 },
               QUERY: { type: Scratch.ArgumentType.STRING, defaultValue: "Ancient Visions" }
             }
           },
@@ -219,8 +220,9 @@
           {
             opcode: "searchArtists",
             blockType: Scratch.BlockType.REPORTER,
-            text: "search for artists using query [QUERY]",
+            text: "search for [NUM] artists using query [QUERY]",
             arguments: {
+              NUM:   { type: Scratch.ArgumentType.NUMBER, defaultValue: 10 },
               QUERY: { type: Scratch.ArgumentType.STRING, defaultValue: "Aliantos" }
             }
           }
@@ -376,7 +378,7 @@
     }
 
     async getTrackComment(args) { return await this._getCollection(["comment","C"], args); }
-    async searchTracks(args)    { return await this._getCollection(["searchT","ST"], args); }
+    async searchTracks(args)    { args.NUM1 = 0; args.NUM2 = args.NUM || 10; return await this._getCollection(["searchT","ST"], args); }
 
     async getArtistAtt(args) {
       const attrib = this._getAttributeProp("artist", Cast.toString(args.THING));
@@ -397,7 +399,7 @@
 
     async getFollowers(args) { return await this._getCollection(["followers","AF"], args); }
     async getTracks(args)    { return await this._getCollection(["tracks","AT"], args); }
-    async searchArtists(args){ return await this._getCollection(["searchA","SA"], args); }
+    async searchArtists(args){ args.NUM1 = 0; args.NUM2 = args.NUM || 10; return await this._getCollection(["searchA","SA"], args); }
   }
 
   Scratch.extensions.register(new SPsoundCloud());
