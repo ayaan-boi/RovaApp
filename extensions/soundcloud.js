@@ -47,6 +47,10 @@
   let fetchedSCComments = [];
   let scCommentsDone_   = false;
 
+  // ── Related tracks state ───────────────────────────────────────────────────
+  let fetchedRelated  = [];
+  let relatedDone     = false;
+
   const TRACK_ATTRIBUTES = [
     genMenuItem("name", null, "title"),
     genMenuItem("artist", null, ["user", "username"]),
@@ -156,6 +160,49 @@
               ID:   { type: Scratch.ArgumentType.NUMBER, defaultValue: 241049935 },
               NUM1: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 },
               NUM2: { type: Scratch.ArgumentType.NUMBER, defaultValue: 20 }
+            }
+          },
+          "---",
+          { blockType: Scratch.BlockType.LABEL, text: Scratch.translate("Related Tracks") },
+          {
+            opcode: "fetchRelatedTracks",
+            blockType: Scratch.BlockType.COMMAND,
+            text: Scratch.translate("fetch [COUNT] related tracks for track ID [ID]"),
+            arguments: {
+              COUNT: { type: Scratch.ArgumentType.NUMBER, defaultValue: 10 },
+              ID:    { type: Scratch.ArgumentType.NUMBER, defaultValue: 241049935 },
+            }
+          },
+          {
+            opcode: "relatedTracksDone",
+            blockType: Scratch.BlockType.BOOLEAN,
+            text: Scratch.translate("related tracks fetched?"),
+          },
+          {
+            opcode: "relatedTrackCount",
+            blockType: Scratch.BlockType.REPORTER,
+            text: Scratch.translate("number of related tracks"),
+          },
+          {
+            opcode: "getRelatedTrack",
+            blockType: Scratch.BlockType.REPORTER,
+            text: Scratch.translate("related track ID [N]"),
+            arguments: {
+              N: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 },
+            }
+          },
+          {
+            opcode: "allRelatedJSON",
+            blockType: Scratch.BlockType.REPORTER,
+            text: Scratch.translate("all related track IDs as JSON"),
+          },
+          {
+            opcode: "fetchRelatedForMany",
+            blockType: Scratch.BlockType.COMMAND,
+            text: Scratch.translate("fetch related tracks for track IDs [IDS] limit [COUNT] per track"),
+            arguments: {
+              IDS:   { type: Scratch.ArgumentType.STRING, defaultValue: "[]" },
+              COUNT: { type: Scratch.ArgumentType.NUMBER, defaultValue: 5 },
             }
           },
           "---",
@@ -405,6 +452,76 @@
       return json?.collection ? JSON.stringify(json.collection.map(item => item.id)) : "[]";
     }
 
+    // ── Related tracks ────────────────────────────────────────────────────────
+    async fetchRelatedTracks(args) {
+      const id    = Cast.toNumber(args.ID);
+      const count = Math.max(1, Math.min(50, Cast.toNumber(args.COUNT)));
+      relatedDone    = false;
+      fetchedRelated = [];
+
+      try {
+        const url  = `${SoundCloudAPI}tracks/${id}/related?limit=${count}&client_id=${clientID}`;
+        const req  = await fetch(proxy + encodeURIComponent(url));
+        const json = await req.json();
+        if (json?.collection) {
+          fetchedRelated = json.collection.map(t => t.id).filter(Boolean);
+          // Cache track info for instant attribute retrieval
+          json.collection.forEach(t => setCache(`track-${t.id}`, t));
+        }
+      } catch(e) { console.warn("SoundCloud related tracks error:", e); }
+
+      relatedDone = true;
+    }
+
+    async fetchRelatedForMany(args) {
+      const ids   = JSON.parse(Cast.toString(args.IDS) || "[]");
+      const count = Math.max(1, Math.min(20, Cast.toNumber(args.COUNT)));
+      relatedDone    = false;
+      fetchedRelated = [];
+
+      const seen = new Set();
+
+      for (const id of ids) {
+        if (!id) continue;
+        try {
+          const url  = `${SoundCloudAPI}tracks/${id}/related?limit=${count}&client_id=${clientID}`;
+          const req  = await fetch(proxy + encodeURIComponent(url));
+          const json = await req.json();
+          if (json?.collection) {
+            for (const t of json.collection) {
+              if (t.id && !seen.has(t.id) && String(t.id) !== String(id)) {
+                seen.add(t.id);
+                fetchedRelated.push(t.id);
+                setCache(`track-${t.id}`, t);
+              }
+            }
+          }
+        } catch(e) {}
+      }
+
+      // Shuffle for variety
+      for (let i = fetchedRelated.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [fetchedRelated[i], fetchedRelated[j]] = [fetchedRelated[j], fetchedRelated[i]];
+      }
+
+      relatedDone = true;
+    }
+
+    relatedTracksDone() {
+      if (relatedDone) { relatedDone = false; return true; }
+      return false;
+    }
+
+    relatedTrackCount() { return fetchedRelated.length; }
+
+    getRelatedTrack(args) {
+      const idx = Math.round(Cast.toNumber(args.N)) - 1;
+      return fetchedRelated[idx] ?? "";
+    }
+
+    allRelatedJSON() { return JSON.stringify(fetchedRelated); }
+
     // ── New comment blocks ─────────────────────────────────────────────────────
     async fetchTrackComments(args) {
       const id    = Cast.toNumber(args.ID);
@@ -420,21 +537,30 @@
 
         if (json?.collection) {
           const comments = json.collection;
-          // Fetch user info for all unique user IDs in parallel
-          const userIds = [...new Set(comments.map(c => c.user_id).filter(Boolean))];
+
+          // SoundCloud includes basic user info inline on each comment
+          // Use that first, then fill gaps with separate user fetches
           const userMap = {};
-          await Promise.all(userIds.map(async (uid) => {
+          comments.forEach(c => {
+            if (c.user && c.user.username) {
+              userMap[c.user_id] = c.user;
+            }
+          });
+
+          // Only fetch users we don't already have from inline data
+          const missingIds = [...new Set(comments.map(c => c.user_id).filter(uid => uid && !userMap[uid]))];
+          await Promise.all(missingIds.map(async (uid) => {
             try {
               const cached = getCache("A" + uid);
               if (cached) { userMap[uid] = cached; return; }
-              const uReq = await fetch(proxy + encodeURIComponent(`${SoundCloudAPI}users/${uid}?client_id=${clientID}`));
+              const uReq  = await fetch(proxy + encodeURIComponent(`${SoundCloudAPI}users/${uid}?client_id=${clientID}`));
               const uJson = await uReq.json();
-              if (uJson) { userMap[uid] = uJson; setCache("A" + uid, uJson); }
+              if (uJson?.username) { userMap[uid] = uJson; setCache("A" + uid, uJson); }
             } catch(e) {}
           }));
 
           fetchedSCComments = comments.map(c => {
-            const user = userMap[c.user_id] || {};
+            const user = userMap[c.user_id] || c.user || {};
             return {
               body:       c.body        || "",
               authorName: user.username || user.full_name || String(c.user_id || ""),
