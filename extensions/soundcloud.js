@@ -479,24 +479,34 @@
       relatedDone    = false;
       fetchedRelated = [];
 
-      const seen = new Set();
+      const seen = new Set(ids.map(String)); // pre-seed with source IDs to exclude them
 
-      for (const id of ids) {
-        if (!id) continue;
+      // Fetch all in parallel instead of sequentially
+      const results = await Promise.all(ids.map(async (id) => {
+        if (!id) return [];
+        // Check cache first
+        const cacheKey = `related-${id}-${count}`;
+        const cached   = getCache(cacheKey);
+        if (cached) return cached;
         try {
           const url  = `${SoundCloudAPI}tracks/${id}/related?limit=${count}&client_id=${clientID}`;
           const req  = await fetch(proxy + encodeURIComponent(url));
           const json = await req.json();
-          if (json?.collection) {
-            for (const t of json.collection) {
-              if (t.id && !seen.has(t.id) && String(t.id) !== String(id)) {
-                seen.add(t.id);
-                fetchedRelated.push(t.id);
-                setCache(`track-${t.id}`, t);
-              }
-            }
+          const tracks = json?.collection || [];
+          setCache(cacheKey, tracks);
+          return tracks;
+        } catch(e) { return []; }
+      }));
+
+      // Merge and deduplicate
+      for (const tracks of results) {
+        for (const t of tracks) {
+          if (t.id && !seen.has(String(t.id))) {
+            seen.add(String(t.id));
+            fetchedRelated.push(t.id);
+            setCache(`track-${t.id}`, t);
           }
-        } catch(e) {}
+        }
       }
 
       // Shuffle for variety
