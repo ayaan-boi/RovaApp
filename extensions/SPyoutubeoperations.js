@@ -104,7 +104,7 @@
   async function createCanvasPlayer(videoId, options, startTime) {
     // Create overlay container div
     canvasPlayer = document.createElement("div");
-    canvasPlayer.style.cssText = `width:${options.width}px;height:${options.height}px;position:absolute;transform:translate(${options.left}px,${options.top}px);pointer-events:auto;`;
+    canvasPlayer.style.cssText = `width:${options.width}px;height:${options.height}px;position:absolute;transform:translate(${options.left}px,${options.top}px);pointer-events:auto;overflow:hidden;`;
     canvasPlayer._ytVidId = videoId;
 
     const playerDiv = document.createElement("div");
@@ -266,6 +266,14 @@
               TOP: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 },
               MINUTES: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 },
               SECONDS: { type: Scratch.ArgumentType.NUMBER, defaultValue: 30 }
+            }
+          },
+          {
+            opcode: "setPlayerScale",
+            blockType: Scratch.BlockType.COMMAND,
+            text: "set player scale to [SCALE] %",
+            arguments: {
+              SCALE: { type: Scratch.ArgumentType.NUMBER, defaultValue: 50 }
             }
           },
           {
@@ -624,6 +632,21 @@
         const params = Object.entries(options).map(e => e[0] + "=" + e[1]).join(",");
         const newWindow = window.open(legacyUrl, "_blank", params);
         if (newWindow) { ytWindows.push([id, newWindow]); newWindow.focus(); }
+      }
+    }
+
+    setPlayerScale(args) {
+      if (!canvasPlayer) return;
+      const scale = Math.max(10, Cast.toNumber(args.SCALE)) / 100;
+      const w = parseFloat(canvasPlayer.style.width)  || 480;
+      const h = parseFloat(canvasPlayer.style.height) || 360;
+      // Scale down using transform while keeping the container small
+      const iframe = canvasPlayer.querySelector('iframe');
+      if (iframe) {
+        iframe.style.width     = (w / scale) + 'px';
+        iframe.style.height    = (h / scale) + 'px';
+        iframe.style.transform = `scale(${scale})`;
+        iframe.style.transformOrigin = 'top left';
       }
     }
 
