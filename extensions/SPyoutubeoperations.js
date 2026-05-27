@@ -111,7 +111,16 @@
     playerDiv.id = "rova-yt-player-" + Date.now();
     canvasPlayer.appendChild(playerDiv);
 
-    vm.renderer.addOverlay(canvasPlayer, "scale-centered");
+    // Add to DOM directly so z-index works relative to Project Interfaces overlay
+    const piOverlay = document.querySelector('.LordCatInterfaces');
+    const parent = piOverlay ? piOverlay.parentElement : null;
+    if (parent) {
+      // Insert before the PI overlay so PI elements appear on top
+      parent.insertBefore(canvasPlayer, piOverlay);
+      canvasPlayer.style.zIndex = '1';
+    } else {
+      vm.renderer.addOverlay(canvasPlayer, "scale-centered");
+    }
 
     await loadYTApi();
 
