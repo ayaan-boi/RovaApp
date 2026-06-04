@@ -7,8 +7,29 @@
 (function (Scratch) {
   "use strict";
 
+  // If we're sandboxed, register a stub extension so projects that depend on
+  // these blocks still LOAD (blocks won't function, but they won't become
+  // undefined/orphaned, which can corrupt the project's block tree).
   if (!Scratch.extensions.unsandboxed) {
-    alert("The HTML Sliders extension must run unsandboxed!");
+    console.warn(
+      "[HTML Sliders] Loaded in sandbox — blocks will be stubs only. " +
+      "Reload with 'Run without sandbox' checked for full functionality."
+    );
+    Scratch.extensions.register({
+      getInfo() {
+        return {
+          id: "htmlSliders",
+          name: "HTML Sliders (sandboxed — reload unsandboxed)",
+          color1: "#6b53ff",
+          color2: "#5641e8",
+          blocks: [
+            { opcode: "_stub", blockType: Scratch.BlockType.COMMAND,
+              text: "⚠ reload extension with 'Run without sandbox' checked" },
+          ],
+        };
+      },
+      _stub() {},
+    });
     return;
   }
 
@@ -170,6 +191,7 @@
     input.addEventListener("input", () => {
       rec.value = Number(input.value);
       valueEl.textContent = formatValue(rec.value, input.step);
+      updateFillVar(rec);
       rec.changed = true;
       try {
         vm.runtime.startHats("htmlSliders_whenChanged",   { ID: id });
@@ -178,6 +200,17 @@
     });
 
     updateSlider(id, opts);
+  }
+
+  // Set --pms-fill (a CSS variable) on the slider so its track gradient
+  // can show a "filled" portion behind the knob. 0–100 %.
+  function updateFillVar(rec) {
+    const min = Number(rec.input.min) || 0;
+    const max = Number(rec.input.max);
+    const val = Number(rec.input.value);
+    const range = max - min;
+    const pct = range > 0 ? ((val - min) / range) * 100 : 0;
+    rec.input.style.setProperty("--pms-fill", pct + "%");
   }
 
   function updateSlider(id, opts) {
@@ -197,6 +230,7 @@
     if (o.w != null) rec.w = Number(o.w);
 
     rec.valueEl.textContent = formatValue(rec.value, rec.input.step);
+    updateFillVar(rec);
     applyPosition(rec);
   }
 
