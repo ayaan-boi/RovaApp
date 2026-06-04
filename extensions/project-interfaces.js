@@ -1,1002 +1,462 @@
-// Name: Project Interfaces
-// ID: lordcatprojectinterfaces
-// Description: Easily create more interactive projects!
-// By: LordCat0
-// Licence: MIT
-// Modified: Added Enter key detection for inputs + Anchor point support
+// Name: HTML Sliders
+// ID: htmlSliders
+// Description: Draggable horizontal sliders that live on the PenguinMod stage.
+// By: ArenaAgent
+// License: MIT
 
-(Scratch => {
-    if (!Scratch.extensions.unsandboxed) {
-        alert("This extension must run unsandboxed!");
-        return;
+(function (Scratch) {
+  "use strict";
+
+  if (!Scratch.extensions.unsandboxed) {
+    alert("The HTML Sliders extension must run unsandboxed!");
+    return;
+  }
+
+  const vm = Scratch.vm;
+
+  const STYLE_ID = "pm-sliders-styles";
+  const CUSTOM_STYLE_ID = "pm-sliders-custom-styles";
+
+  // ------------------------------------------------------------------------
+  // Overlay container — attached to the stage via vm.renderer.addOverlay,
+  // which makes it scale + reposition with the project automatically.
+  // ------------------------------------------------------------------------
+  const overlay = document.createElement("div");
+  overlay.className = "pm-sliders-overlay";
+  overlay.style.cssText = `
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    position: relative;
+    overflow: visible;
+  `;
+  vm.renderer.addOverlay(overlay, "scale");
+
+  // ------------------------------------------------------------------------
+  // Default styling — note all sizes are in *stage pixels* because the
+  // overlay is scaled by the renderer to match the stage.
+  // ------------------------------------------------------------------------
+  const CSS = `
+    .pm-sliders-overlay .pms-slider {
+      position: absolute;
+      pointer-events: auto;
+      display: flex;
+      flex-direction: column;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #fff;
+      user-select: none;
+      -webkit-user-select: none;
+      transform: translate(-50%, -50%);
     }
-    const lookup = {
-        Label: "span",
-        Video: "video",
-        Image: "img",
-        Input: "input",
-        Box: "div",
-        Button: "button",
-    };
-    const extIcon =
-        "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iOTMxIiBoZWlnaHQ9IjkzMSIgdmlld0JveD0iMCAwIDkzMSA5MzEiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxjaXJjbGUgY3g9IjQ2NS41IiBjeT0iNDY1LjUiIHI9IjQ0MyIgZmlsbD0iIzcwN0VGRiIgc3Ryb2tlPSIjNjA2REU0IiBzdHJva2Utd2lkdGg9IjQ1Ii8+CjxwYXRoIGQ9Ik0zMSAzOTZDMzEgMzgyLjE5MyA0Mi4xOTI5IDM3MSA1NiAzNzFINTEyQzUyNS44MDcgMzcxIDUzNyAzODIuMTkzIDUzNyAzOTZWNTM2QzUzNyA1NDkuODA3IDUyNS44MDcgNTYxIDUxMiA1NjFINTZDNDIuMTkyOSA1NjEgMzEgNTQ5LjgwNyAzMSA1MzZWMzk2WiIgZmlsbD0iIzYwNkRFNCIvPgo8cGF0aCBkPSJNMjYwIDY3N0MyNjAgNjYzLjE5MyAyNzEuMTkzIDY1MiAyODUgNjUySDgxOS45NTJDODM5LjE0IDY1MiA4NTEuMTc1IDY3Mi43MjMgODQxLjY2NiA2ODkuMzlMNzczLjE5NSA4MDkuMzlDNzY4Ljc0NiA4MTcuMTg3IDc2MC40NTggODIyIDc1MS40ODEgODIySDI4NUMyNzEuMTkzIDgyMiAyNjAgODEwLjgwNyAyNjAgNzk3VjY3N1oiIGZpbGw9IiM2MDZERTQiLz4KPHBhdGggZD0iTTI4MSAyNzVDMjgxIDI4OC44MDcgMjkyLjE5MyAzMDAgMzA2IDMwMEg4NDAuOTUyQzg2MC4xNCAzMDAgODcyLjE3NSAyNzkuMjc3IDg2Mi42NjYgMjYyLjYxTDc5NC4xOTUgMTQyLjYxQzc4OS43NDYgMTM0LjgxMyA3ODEuNDU4IDEzMCA3NzIuNDgxIDEzMEgzMDZDMjkyLjE5MyAxMzAgMjgxIDE0MS4xOTMgMjgxIDE1NVYyNzVaIiBmaWxsPSIjNjA2REU0Ii8+CjxyZWN0IHg9IjE4NyIgeT0iMjAyIiB3aWR0aD0iNTQ5IiBoZWlnaHQ9IjI5NSIgcng9IjQ2IiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjQyIi8+CjxyZWN0IHg9IjE4NyIgeT0iNTY2IiB3aWR0aD0iMTc5IiBoZWlnaHQ9IjE2NCIgcng9IjQ2IiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjQyIi8+CjxyZWN0IHg9IjQzMSIgeT0iNTY2IiB3aWR0aD0iMzE0IiBoZWlnaHQ9IjE2NCIgcng9IjQ2IiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjQyIi8+Cjwvc3ZnPgo=";
-    const textIcon =
-        "data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4NCjxzdmcgd2lkdGg9IjgwMHB4IiBoZWlnaHQ9IjgwMHB4IiB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+DQo8cGF0aCBkPSJNOCA0VjIwTTE3IDEyVjIwTTYgMjBIMTBNMTUgMjBIMTlNMTMgN1Y0SDNWN00yMSAxNFYxMkgxM1YxNCIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPg0KPC9zdmc+";
-    const imageIcon =
-        "data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4NCjxzdmcgd2lkdGg9IjgwMHB4IiBoZWlnaHQ9IjgwMHB4IiB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+DQo8ZyBpZD0iTWVkaWEgLyBJbWFnZV8wMSI+DQo8cGF0aCBpZD0iVmVjdG9yIiBkPSJNMy4wMDAwNSAxNy4wMDAxQzMgMTYuOTM1NSAzIDE2Ljg2ODkgMyAxNi44MDAyVjcuMjAwMkMzIDYuMDgwMDkgMyA1LjUxOTYyIDMuMjE3OTkgNS4wOTE4QzMuNDA5NzMgNC43MTU0NyAzLjcxNTQ3IDQuNDA5NzMgNC4wOTE4IDQuMjE3OTlDNC41MTk2MiA0IDUuMDgwMDkgNCA2LjIwMDIgNEgxNy44MDAyQzE4LjkyMDMgNCAxOS40ODAxIDQgMTkuOTA3OSA0LjIxNzk5QzIwLjI4NDIgNC40MDk3MyAyMC41OTA1IDQuNzE1NDcgMjAuNzgyMiA1LjA5MThDMjEgNS41MTkyIDIxIDYuMDc4OTkgMjEgNy4xOTY5MVYxNi44MDMxQzIxIDE3LjI4ODEgMjEgMTcuNjY3OSAyMC45ODIyIDE3Ljk3NzRNMy4wMDAwNSAxNy4wMDAxQzMuMDAwODIgMTcuOTg4NCAzLjAxMzM3IDE4LjUwNTggMy4yMTc5OSAxOC45MDc0QzMuNDA5NzMgMTkuMjgzNyAzLjcxNTQ3IDE5LjU5MDUgNC4wOTE4IDE5Ljc4MjJDNC41MTkyIDIwIDUuMDc4OTkgMjAgNi4xOTY5MSAyMEgxNy44MDM2QzE4LjkyMTUgMjAgMTkuNDgwNSAyMCAxOS45MDc5IDE5Ljc4MjJDMjAuMjg0MiAxOS41OTA1IDIwLjU5MDUgMTkuMjgzNyAyMC43ODIyIDE4LjkwNzRDMjAuOTA1NSAxOC42NjU0IDIwLjk1OSAxOC4zODEzIDIwLjk4MjIgMTcuOTc3NE0zLjAwMDA1IDE3LjAwMDFMNy43Njc5OCAxMS40Mzc1TDcuNzY5MzkgMTEuNDM2QzguMTkyMjcgMTAuOTQyNiA4LjQwNDA2IDEwLjY5NTUgOC42NTUyNyAxMC42MDY0QzguODc1OTQgMTAuNTI4MiA5LjExNjg2IDEwLjUzIDkuMzM2NDMgMTAuNjExM0M5LjU4NjY0IDEwLjcwNCA5Ljc5NTA2IDEwLjk1MzkgMTAuMjExOSAxMS40NTQxTDEyLjg4MzEgMTQuNjU5NUMxMy4yNjkgMTUuMTIyNiAxMy40NjMgMTUuMzU1NCAxMy42OTg2IDE1LjQ0ODlDMTMuOTA2NSAxNS41MzEzIDE0LjEzNTcgMTUuNTQwNiAxNC4zNTAxIDE1LjQ3NzNDMTQuNTk0MiAxNS40MDUzIDE0LjgwOTEgMTUuMTkwNCAxNS4yMzg4IDE0Ljc2MDdMMTUuNzM1OCAxNC4yNjM3QzE2LjE3MzMgMTMuODI2MiAxNi4zOTIxIDEzLjYwNzYgMTYuNjM5NyAxMy41MzYxQzE2Ljg1NzEgMTMuNDczNCAxNy4wODk2IDEzLjQ4NjkgMTcuMjk4OCAxMy41NzMyQzE3LjUzNyAxMy42NzE2IDE3LjczMDIgMTMuOTEyNCAxOC4xMTY3IDE0LjM5NTVMMjAuOTgyMiAxNy45Nzc0TTIwLjk4MjIgMTcuOTc3NEwyMSAxNy45OTk2TTE1IDEwQzE0LjQ0NzcgMTAgMTQgOS41NTIyOCAxNCA5QzE0IDguNDQ3NzIgMTQuNDQ3NyA4IDE1IDhDMTUuNTUyMyA4IDE2IDguNDQ3NzIgMTYgOUMxNiA5LjU1MjI4IDE1LjU1MjMgMTAgMTUgMTBaIiBzdHJva2U9IiNmZmZmZmYiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+DQo8L2c+DQo8L3N2Zz4=";
-    const videoIcon =
-        "data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4NCjxzdmcgd2lkdGg9IjgwMHB4IiBoZWlnaHQ9IjgwMHB4IiB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+DQo8cGF0aCBkPSJNMTYgMTBMMTguNTc2OCA4LjQ1MzkyQzE5LjM2OTkgNy45NzgwMyAxOS43NjY1IDcuNzQwMDkgMjAuMDkyOCA3Ljc3MDUxQzIwLjM3NzMgNy43OTcwMyAyMC42MzY5IDcuOTQ0IDIwLjgwNiA4LjE3NDMzQzIxIDguNDM4NDggMjEgOC45MDA5NSAyMSA5LjgyNTlWMTQuMTc0MUMyMSAxNS4wOTkgMjEgMTUuNTYxNSAyMC44MDYgMTUuODI1N0MyMC42MzY5IDE2LjA1NiAyMC4zNzczIDE2LjIwMyAyMC4wOTI4IDE2LjIyOTVDMTkuNzY2NSAxNi4yNTk5IDE5LjM2OTkgMTYuMDIyIDE4LjU3NjggMTUuNTQ2MUwxNiAxNE02LjIgMThIMTIuOEMxMy45MjAxIDE4IDE0LjQ4MDIgMTggMTQuOTA4IDE3Ljc4MkMxNS4yODQzIDE3LjU5MDMgMTUuNTkwMyAxNy4yODQzIDE1Ljc4MiAxNi45MDhDMTYgMTYuNDgwMiAxNiAxNS45MjAxIDE2IDE0LjhWOS4yQzE2IDguMDc5OSAxNiA3LjUxOTg0IDE1Ljc4MiA3LjA5MjAyQzE1LjU5MDMgNi43MTU2OSAxNS4yODQzIDYuNDA5NzMgMTQuOTA4IDYuMjE3OTlDMTQuNDgwMiA2IDEzLjkyMDEgNiAxMi44IDZINi4yQzUuMDc5OSA2IDQuNTE5ODQgNiA0LjA5MjAyIDYuMjE3OTlDMy43MTU2OSA2LjQwOTczIDMuNDA5NzMgNi43MTU2OSAzLjIxNzk5IDcuMDkyMDJDMyA3LjUxOTg0IDMgOC4wNzk4OSAzIDkuMlYxNC44QzMgMTUuOTIwMSAzIDE2LjQ4MDIgMy4yMTc5OSAxNi45MDhDMy40MDk3MyAxNy4yODQzIDMuNzE1NjkgMTcuNTkwMyA0LjA5MjAyIDE3Ljc4MkM0LjUxOTg0IDE4IDUuMDc5ODkgMTggNi4yIDE4WiIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPg0KPC9zdmc+";
-    const buttonicon =
-        "data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz48IS0tIFVwbG9hZGVkIHRvOiBTVkcgUmVwbywgd3d3LnN2Z3JlcG8uY29tLCBHZW5lcmF0b3I6IFNWRyBSZXBvIE1peGVyIFRvb2xzIC0tPgo8c3ZnIGZpbGw9IiNmZmZmZmYiIHdpZHRoPSI4MDBweCIgaGVpZ2h0PSI4MDBweCIgdmlld0JveD0iMCAwIDUyIDUyIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPgogIDxwYXRoIGQ9Ik0zMS45OTgxNjg5LDExLjk5OTUxMDQgQzMzLjQ2NTk0MjQsMTEuOTk4NTExNyAzNC45OTgyOTEsMTMuMTMyOCAzNC45OTgyOTEsMTYuMTM0OCBMMzQuOTk4MjkxLDE2LjEzNDggTDM0Ljk5ODI5MSwyNiBDMzQuOTk4MjkxLDI3LjUxMzQyNzcgMzYuMzc3OTA1MywyOC4xMTE0MDE0IDM2Ljk3NzkwNTMsMjguMzExNDAxNCBMMzYuOTc3OTA1MywyOC4zMTE0MDE0IEw0My44LDMwLjggQzQ2LjcsMzEuOSA0OC41LDM1IDQ3LjcsMzguMiBMNDcuNywzOC4yIEw0NC41LDQ4LjU5OTUgQzQ0LjMsNDkuMzk5NSA0My42LDQ5Ljk5OTUgNDIuNyw0OS45OTk1IEw0Mi43LDQ5Ljk5OTUgTDI2LjYsNDkuOTk5NSBDMjUuOCw0OS45OTk1IDI1LjEsNDkuNTk5NSAyNC44LDQ4Ljg5OTUgQzIwLjkzMTg2ODUsMzkuOTE5MDU1MyAxOC43ODY5ODczLDM0LjkzOTU3NTIgMTguMzY1MzU2NCwzMy45NjEwNTk2IEMxNy45NDM3MjU2LDMyLjk4MjU0MzkgMTguMjIxOTQwMSwzMi4xOTU1MjQxIDE5LjIsMzEuNiBDMjEsMzAuMyAyMy43LDMxLjYzOTU1MDggMjQuOCwzMy41Mzk1NTA4IEwyNC44LDMzLjUzOTU1MDggTDI2LjQxNTc3MTUsMzUuNzQzMTgyOCBDMjcuMDUxNTEzNywzNi45NTA4IDI5LDM2Ljk1MDggMjksMzUuMTUwOCBMMjksMzUuMTUwOCBMMjksMTYuMTM0OCBDMjksMTMuMTMyOCAzMC41MzAzOTU1LDEyLjAwMDUxMTcgMzEuOTk4MTY4OSwxMS45OTk1MTA0IFogTTQ2LDIgQzQ4LjIsMiA1MCwzLjggNTAsNiBMNTAsNiBMNTAsMjEgQzUwLDIyLjg4MjMyMyA0OC4xODEzMzg5LDI1LjAwMzAzNDggNDYsMjUgTDQ2LDI1IEw0MC4wMTA0MzcsMjUgQzM5LDI1IDM5LDI0LjE4ODExNTcgMzksMjQuMDU5MDgyIEwzOSwxNS41IEMzOSwxMS42NTQ3MDE4IDM3LjAxODc5ODgsOCAzMiw4IEMyNi45ODEyMDEyLDggMjUsMTEuMTg3OTc4MyAyNSwxNS41IEwyNSwxNS41IEwyNSwyNC4wNTkwODIgQzI1LDI0LjQwNzgwMDcgMjQuNzM1MjI5NSwyNSAyMy45ODc3OTMsMjUgTDIzLjk4Nzc5MywyNSBMNiwyNSBDMy44LDI1IDIsMjMuMiAyLDIxIEwyLDIxIEwyLDYgQzIsMy44IDMuOCwyIDYsMiBMNiwyIFoiIC8+Cjwvc3ZnPg==";
-    const inputIcon =
-        "data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4KPHN2ZyBmaWxsPSIjZmZmZmZmIiBoZWlnaHQ9IjgwMHB4IiB3aWR0aD0iODAwcHgiIHZlcnNpb249IjEuMSIgaWQ9Ikljb25zIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiANCgkgdmlld0JveD0iMCAwIDMyIDMyIiB4bWw6c3BhY2U9InByZXNlcnZlIj4NCjxwYXRoIGQ9Ik0yOSwxMUgxNVY5aDFjMC42LDAsMS0wLjQsMS0xcy0wLjQtMS0xLTFoLTRjLTAuNiwwLTEsMC40LTEsMXMwLjQsMSwxLDFoMXYySDNjLTAuNiwwLTEsMC40LTEsMXYxMGMwLDAuNiwwLjQsMSwxLDFoMTB2Mg0KCWgtMWMtMC42LDAtMSwwLjQtMSwxczAuNCwxLDEsMWg0YzAuNiwwLDEtMC40LDEtMXMtMC40LTEtMS0xaC0xdi0yaDE0YzAuNiwwLDEtMC40LDEtMVYxMkMzMCwxMS40LDI5LjYsMTEsMjksMTF6IE0xMCwxNkg5djMNCgljMCwwLjYtMC40LDEtMSwxcy0xLTAuNC0xLTF2LTNINmMtMC42LDAtMS0wLjQtMS0xczAuNC0xLDEtMWg0YzAuNiwwLDEsMC40LDEsMVMxMC42LDE2LDEwLDE2eiBNMTUsMjFjMCwwLjUtMC41LDEtMSwxcy0xLTAuNS0xLTENCgl2LThjMC0wLjUsMC41LTEsMS0xczEsMC41LDEsMVYyMXoiLz4NCjwvc3ZnPg==";
-    const vm = Scratch.vm;
-    const elementbox = document.createElement("div");
-    elementbox.classList.add("LordCatInterfaces");
-    vm.renderer.addOverlay(elementbox, "scale");
-    let elements = {};
-    let metadata = {};
-    let inputhold = {};
-    let lastValues = {};
-    const css = document.createElement("style");
-    css.textContent = `
-        .LordCatInterfaces svg{
-            vertical-align: top;
-        }
-        .LordCatInterfaces[hidden]{
-            display: none
-        }
+    .pm-sliders-overlay .pms-label {
+      font-size: 12px;
+      margin-bottom: 4px;
+      opacity: 0.9;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+    }
+    .pm-sliders-overlay .pms-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .pm-sliders-overlay input[type=range] {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 6px;
+      background: rgba(255,255,255,0.3);
+      border-radius: 999px;
+      outline: none;
+      cursor: pointer;
+      margin: 0;
+      accent-color: #6b53ff;
+    }
+    .pm-sliders-overlay input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      background: #6b53ff;
+      border: 2px solid #fff;
+      border-radius: 50%;
+      cursor: grab;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+    }
+    .pm-sliders-overlay input[type=range]:active::-webkit-slider-thumb { cursor: grabbing; }
+    .pm-sliders-overlay input[type=range]::-moz-range-thumb {
+      width: 18px; height: 18px;
+      background: #6b53ff;
+      border: 2px solid #fff;
+      border-radius: 50%;
+      cursor: grab;
+    }
+    .pm-sliders-overlay .pms-value {
+      min-width: 40px;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      font-size: 13px;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+    }
+  `;
+
+  function injectStyles() {
+    if (document.getElementById(STYLE_ID)) return;
+    const s = document.createElement("style");
+    s.id = STYLE_ID;
+    s.textContent = CSS;
+    document.head.appendChild(s);
+  }
+  injectStyles();
+
+  let customCSS = "";
+  function applyCustomCSS() {
+    let tag = document.getElementById(CUSTOM_STYLE_ID);
+    if (!tag) {
+      tag = document.createElement("style");
+      tag.id = CUSTOM_STYLE_ID;
+      document.head.appendChild(tag);
+    }
+    tag.textContent = customCSS || "";
+  }
+
+  // ------------------------------------------------------------------------
+  // State
+  //   id -> { wrap, input, valueEl, labelEl, x, y, w, value, changed }
+  // ------------------------------------------------------------------------
+  const sliders = {};
+  const lastValues = {}; // for "when changed" hat
+
+  // Convert Scratch stage coords (0,0 = center, +y = up) -> overlay % coords
+  function applyPosition(rec) {
+    const sw = vm.runtime.stageWidth  || 480;
+    const sh = vm.runtime.stageHeight || 360;
+    // Position is the *center* of the slider (matches Scratch sprite convention)
+    rec.wrap.style.left  = ((sw / 2 + rec.x) / sw * 100) + "%";
+    rec.wrap.style.top   = ((sh / 2 - rec.y) / sh * 100) + "%";
+    // Width in stage pixels -> % of stage width
+    rec.wrap.style.width = (rec.w / sw * 100) + "%";
+  }
+
+  function createSlider(id, opts) {
+    if (sliders[id]) { updateSlider(id, opts); return; }
+    const wrap = document.createElement("div");
+    wrap.className = "pms-slider";
+    wrap.dataset.id = id;
+    wrap.innerHTML = `
+      <div class="pms-label"></div>
+      <div class="pms-row">
+        <input type="range" />
+        <div class="pms-value"></div>
+      </div>
     `;
-    css.classList.add("LordCatInterfaces-Style");
-    document.head.append(css);
+    overlay.appendChild(wrap);
 
-    const textDecoder = new TextDecoder("utf-8");
-    const domParser = new DOMParser();
+    const input   = wrap.querySelector("input");
+    const valueEl = wrap.querySelector(".pms-value");
+    const labelEl = wrap.querySelector(".pms-label");
 
-    const datauri = (file) => {
-        return new Promise((resolve, reject) => {
-            if (!(file instanceof File)) resolve("");
-            const reader = new FileReader();
-            reader.readAsDataURL(file);
-            reader.onload = () => resolve(reader.result);
-            reader.onerror = () => reject(reader.error);
-        });
+    const rec = {
+      wrap, input, valueEl, labelEl,
+      x: 0, y: 0, w: 200,
+      value: 0, changed: false,
     };
+    sliders[id] = rec;
 
-    const datauriFromCostume = (costume, target) => {
-        let costumeIndex = target.getCostumeIndexByName(costume);
-        if (costumeIndex === -1) {
-            switch (costume) {
-                case "next costume":
-                    costumeIndex = target.currentCostume === target.sprite.costumes_.length - 1 ? 0 : target.currentCostume + 1;
-                    break;
-                case "previous costume":
-                    costumeIndex = target.currentCostume === 0 ? target.sprite.costumes_.length - 1 : target.currentCostume - 1;
-                    break;
-                case "random costume":
-                    costumeIndex = Math.floor(Math.random() * target.sprite.costumes_.length);
-                    break;
-            }
-        }
-        return target.sprite.costumes[costumeIndex].asset.encodeDataURI();
-    };
-
-    // ── Helper: attach Enter listener to any input/textarea element ──
-    const attachEnterListener = (element, id) => {
-        element.addEventListener("keydown", (e) => {
-            if (e.key === "Enter") {
-                metadata[id].enterPressed = true;
-            }
-        });
-    };
-
-    const replaceElement = (oldElement, newElement, id) => {
-        newElement.dataset.id = id;
-        newElement.setAttribute("style", oldElement.getAttribute("style"));
-        newElement.addEventListener("mouseover", () => (metadata[id].hovered = true));
-        newElement.addEventListener("mouseout", () => (metadata[id].hovered = false));
-        newElement.addEventListener("click", () => (metadata[id].clicked = true));
-        if (oldElement.tagName === "INPUT" || oldElement.tagName === "TEXTAREA") {
-            newElement.value = oldElement.value;
-            newElement.addEventListener("input", () => (metadata[id].inputdirty = true));
-            attachEnterListener(newElement, id);
-        }
-        oldElement.replaceWith(newElement);
-        return newElement;
-    };
-
-    let fonts = [];
-    document.fonts.ready.then(() => {
-        fonts = Array.from(document.fonts.values()).map(f => f.family);
+    input.addEventListener("input", () => {
+      rec.value = Number(input.value);
+      valueEl.textContent = formatValue(rec.value, input.step);
+      rec.changed = true;
+      try {
+        vm.runtime.startHats("htmlSliders_whenChanged",   { ID: id });
+        vm.runtime.startHats("htmlSliders_whenAnyChanged");
+      } catch (_) {}
     });
 
-    class ProjectInterfaces {
-        getInfo () {
-            return {
-                id: "lordcatprojectinterfaces",
-                name: "Project interfaces",
-                color1: "#707eff",
-                color2: "#6675fa",
-                docsURI: "https://extensions.penguinmod.com/docs/ProjectInterfaces",
-                menuIconURI: extIcon,
-                blocks: [
-                    {
-                        opcode: "ClearAll",
-                        text: "clear all elements",
-                        blockType: Scratch.BlockType.COMMAND,
-                    },
-                    {
-                        opcode: "Create",
-                        text: "create [type] element with id [id]",
-                        blockType: Scratch.BlockType.COMMAND,
-                        arguments: {
-                            type: { type: Scratch.ArgumentType.STRING, menu: "ElementType" },
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                        },
-                    },
-                    {
-                        opcode: "Delete",
-                        text: "delete element with id [id]",
-                        blockType: Scratch.BlockType.COMMAND,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                        },
-                    },
-                    {
-                        opcode: "Visibility",
-                        text: "[menu] element with id [id]",
-                        blockType: Scratch.BlockType.COMMAND,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            menu: { type: Scratch.ArgumentType.STRING, menu: "Visibility" },
-                        },
-                    },
-                    {
-                        opcode: "ElementVisibility",
-                        text: "element with id [id] is [status]",
-                        blockType: Scratch.BlockType.BOOLEAN,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            status: { type: Scratch.ArgumentType.STRING, menu: "VisibilityStatus" },
-                        },
-                    },
-                    {
-                        opcode: "AllElements",
-                        text: "All elements",
-                        blockType: Scratch.BlockType.REPORTER,
-                    },
-                    { blockType: Scratch.BlockType.LABEL, text: "Styling" },
-                    {
-                        opcode: "Position",
-                        text: "set position of id [id] to x [x] y [y]",
-                        blockType: Scratch.BlockType.COMMAND,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            x: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 },
-                            y: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 },
-                        },
-                    },
-                    {
-                        opcode: "AnchorPoint",
-                        text: "set anchor of id [id] to [anchor]",
-                        blockType: Scratch.BlockType.COMMAND,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            anchor: { type: Scratch.ArgumentType.STRING, menu: "AnchorMenu" },
-                        },
-                    },
-                    {
-                        opcode: "Direction",
-                        text: "set direction of id [id] to [dir]",
-                        blockType: Scratch.BlockType.COMMAND,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            dir: { type: Scratch.ArgumentType.ANGLE, defaultValue: 90 },
-                        },
-                    },
-                    {
-                        opcode: "Scale",
-                        text: "set scale of id [id] to width [width]px height [height]px",
-                        blockType: Scratch.BlockType.COMMAND,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            width: { type: Scratch.ArgumentType.NUMBER, defaultValue: 100 },
-                            height: { type: Scratch.ArgumentType.NUMBER, defaultValue: 100 },
-                        },
-                    },
-                    {
-                        opcode: "Layer",
-                        text: "set layer of id [id] to [layer]",
-                        blockType: Scratch.BlockType.COMMAND,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            layer: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 },
-                        },
-                    },
-                    {
-                        opcode: "Cursor",
-                        text: "set hover cursor of id [id] to [cursor]",
-                        blockType: Scratch.BlockType.COMMAND,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            cursor: { type: Scratch.ArgumentType.STRING, menu: "Cursors" },
-                        },
-                    },
-                    {
-                        opcode: "Color",
-                        text: "set color of id [id] to [color]",
-                        blockType: Scratch.BlockType.COMMAND,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            color: { type: Scratch.ArgumentType.COLOR },
-                        },
-                    },
-                    {
-                        opcode: "BackgroundColor",
-                        text: "set background color of id [id] to [color]",
-                        blockType: Scratch.BlockType.COMMAND,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            color: { type: Scratch.ArgumentType.COLOR },
-                        },
-                    },
-                    {
-                        opcode: "CustomCSS",
-                        text: "set custom css of id [id] to [css]",
-                        blockType: Scratch.BlockType.COMMAND,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            css: { type: Scratch.ArgumentType.STRING, defaultValue: "background-color: red" },
-                        },
-                    },
-                    {
-                        opcode: "HtmlElement",
-                        text: "create html element [htmltag] with id [id]",
-                        blockType: Scratch.BlockType.COMMAND,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            htmltag: { type: Scratch.ArgumentType.STRING, defaultValue: "h1" },
-                        },
-                    },
-                    "---",
-                    {
-                        opcode: "WhenClicked",
-                        text: "when id [id] is clicked",
-                        blockType: Scratch.BlockType.HAT,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                        },
-                    },
-                    {
-                        opcode: "Attribute",
-                        text: "[attr] of id [id]",
-                        blockType: Scratch.BlockType.REPORTER,
-                        arguments: {
-                            attr: { type: Scratch.ArgumentType.STRING, menu: "Attributes" },
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                        },
-                    },
-                    {
-                        opcode: "IsHovered",
-                        text: "[id] hovered?",
-                        blockType: Scratch.BlockType.BOOLEAN,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                        },
-                    },
-                    {
-                        opcode: "IsMouseDown",
-                        text: "mouse held on [id]?",
-                        blockType: Scratch.BlockType.BOOLEAN,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                        },
-                    },
-                    {
-                        opcode: "ElementWidth",
-                        text: "width of element [id]",
-                        blockType: Scratch.BlockType.REPORTER,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                        },
-                    },
-                    {
-                        opcode: "ElementHeight",
-                        text: "height of element [id]",
-                        blockType: Scratch.BlockType.REPORTER,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                        },
-                    },
-                    { blockType: Scratch.BlockType.LABEL, text: "Labels" },
-                    {
-                        opcode: "LabelText",
-                        text: "set label text with id [id] to [text]",
-                        arguments: {
-                            text: { type: Scratch.ArgumentType.STRING, defaultValue: "Hello world!" },
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                        },
-                        blockIconURI: textIcon,
-                    },
-                    {
-                        opcode: "LabelAlign",
-                        text: "set label alignment with id [id] to [align]",
-                        arguments: {
-                            align: { type: Scratch.ArgumentType.STRING, menu: "Alignment" },
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                        },
-                        blockIconURI: textIcon,
-                    },
-                    {
-                        opcode: "LabelFontSize",
-                        text: "set label font size with id [id] to [size]px",
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            size: { type: Scratch.ArgumentType.NUMBER, defaultValue: 40 },
-                        },
-                        blockIconURI: textIcon,
-                    },
-                    {
-                        opcode: "LabelFont",
-                        text: "set label font with id [id] to [font]",
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            font: { type: Scratch.ArgumentType.STRING, menu: "Fonts" },
-                        },
-                        blockIconURI: textIcon,
-                    },
-                    {
-                        opcode: "LabelLineCount",
-                        text: "number of lines in label [id]",
-                        blockType: Scratch.BlockType.REPORTER,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                        },
-                        blockIconURI: textIcon,
-                    },
-                    { blockType: Scratch.BlockType.LABEL, text: "Images" },
-                    {
-                        opcode: "ImageUrl",
-                        text: "set image with id [id] to url [url]",
-                        blockType: Scratch.BlockType.COMMAND,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            url: { type: Scratch.ArgumentType.STRING, defaultValue: "https://extensions.turbowarp.org/dango.png" },
-                        },
-                        blockIconURI: imageIcon,
-                    },
-                    {
-                        opcode: "ImageCostume",
-                        text: "set image with id [id] to costume [costume]",
-                        blockType: Scratch.BlockType.COMMAND,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            costume: { type: Scratch.ArgumentType.COSTUME },
-                        },
-                        blockIconURI: imageIcon,
-                    },
-                    { blockType: Scratch.BlockType.LABEL, text: "Videos" },
-                    {
-                        opcode: "VideoSource",
-                        text: "set video with id [id] to url [url]",
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            url: { type: Scratch.ArgumentType.STRING, defaultValue: "https://extensions.turbowarp.org/dango.png" },
-                        },
-                        blockIconURI: videoIcon,
-                    },
-                    {
-                        opcode: "VideoControl",
-                        text: "[control] video with id [id]",
-                        arguments: {
-                            control: { type: Scratch.ArgumentType.STRING, menu: "VideoControls" },
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                        },
-                        blockIconURI: videoIcon,
-                    },
-                    {
-                        opcode: "VideoVolume",
-                        text: "set volume of video [id] to [volume]%",
-                        arguments: {
-                            volume: { type: Scratch.ArgumentType.NUMBER, defaultValue: 100 },
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                        },
-                        blockIconURI: videoIcon,
-                    },
-                    {
-                        opcode: "VideoLoop",
-                        text: "set loop of video [id] to [toggle]",
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            toggle: { type: Scratch.ArgumentType.STRING, menu: "EnableDisable" },
-                        },
-                        blockIconURI: videoIcon,
-                    },
-                    {
-                        opcode: "VideoHtmlControls",
-                        text: "set video controls of id [id] to [toggle]",
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            toggle: { type: Scratch.ArgumentType.STRING, menu: "EnableDisable" },
-                        },
-                        blockIconURI: videoIcon,
-                    },
-                    { blockType: Scratch.BlockType.LABEL, text: "Inputs" },
-                    {
-                        opcode: "InputType",
-                        text: "set input type of id [id] to [input]",
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            input: { type: Scratch.ArgumentType.STRING, menu: "Inputs" },
-                        },
-                        blockIconURI: inputIcon,
-                    },
-                    {
-                        opcode: "InputAccent",
-                        text: "set input accent color of id [id] to [color]",
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            color: { type: Scratch.ArgumentType.COLOR },
-                        },
-                        blockIconURI: inputIcon,
-                    },
-                    {
-                        opcode: "InputPlaceholder",
-                        text: "set placeholder of id [id] to [placeholder]",
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            placeholder: { type: Scratch.ArgumentType.STRING, defaultValue: "Hello world!" },
-                        },
-                        blockIconURI: inputIcon,
-                    },
-                    {
-                        opcode: "InputMinMax",
-                        text: "set [type] of slider [id] to [value]",
-                        arguments: {
-                            type: { type: Scratch.ArgumentType.STRING, menu: "MinMax", defaultValue: "min" },
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            value: { type: Scratch.ArgumentType.NUMBER, defaultValue: 100 },
-                        },
-                        blockIconURI: inputIcon,
-                    },
-                    {
-                        opcode: "InputSetValue",
-                        text: "set value of id [id] to [value]",
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            value: { type: Scratch.ArgumentType.STRING, defaultValue: "Hello world!" },
-                        },
-                        blockIconURI: inputIcon,
-                    },
-                    {
-                        opcode: "InputValue",
-                        text: "value of input with id [id]",
-                        blockType: Scratch.BlockType.REPORTER,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                        },
-                        blockIconURI: inputIcon,
-                    },
-                    {
-                        opcode: "WhenInputChanged",
-                        text: "when input with id [id] changed",
-                        blockType: Scratch.BlockType.HAT,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                        },
-                        blockIconURI: inputIcon,
-                    },
-                    {
-                        opcode: "WhenEnterPressed",
-                        text: "when Enter pressed in input [id]",
-                        blockType: Scratch.BlockType.HAT,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                        },
-                        blockIconURI: inputIcon,
-                    },
-                    {
-                        opcode: "EnterPressed",
-                        text: "Enter pressed in input [id]?",
-                        blockType: Scratch.BlockType.BOOLEAN,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                        },
-                        blockIconURI: inputIcon,
-                    },
-                    {
-                        opcode: "ResetEnter",
-                        text: "reset Enter pressed for input [id]",
-                        blockType: Scratch.BlockType.COMMAND,
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                        },
-                        blockIconURI: inputIcon,
-                    },
-                    { blockType: Scratch.BlockType.LABEL, text: "Buttons" },
-                    {
-                        opcode: "ButtonText",
-                        text: "set text of button [id] to [text]",
-                        arguments: {
-                            id: { type: Scratch.ArgumentType.STRING, defaultValue: "My element" },
-                            text: { type: Scratch.ArgumentType.STRING, defaultValue: "Hello world!" },
-                        },
-                        blockIconURI: buttonicon,
-                    },
-                ],
-                menus: {
-                    ElementType: {
-                        acceptReporters: false,
-                        items: ["Label", "Image", "Video", "Input", "Box", "Button"],
-                    },
-                    Inputs: {
-                        acceptReporters: false,
-                        items: ["Text", "Text Area", "Number", "Color", "Checkbox", "File", "Email", "Range", "Image"],
-                    },
-                    Cursors: {
-                        acceptReporters: false,
-                        items: ["default", "pointer", "text", "wait", "move", "not-allowed", "crosshair", "help", "progress", "grab", "grabbing"],
-                    },
-                    Fonts: { acceptReporters: true, items: fonts },
-                    Attributes: {
-                        acceptReporters: false,
-                        items: ["X", "Y", "Direction", "Width", "Height", "Cursor", "Source"],
-                    },
-                    VideoControls: { acceptReporters: false, items: ["Play", "Stop", "Pause"] },
-                    EnableDisable: { acceptReporters: false, items: ["Enabled", "Disabled"] },
-                    Alignment: { acceptReporters: false, items: ["Left", "Right", "Center"] },
-                    Visibility: { acceptReporters: false, items: ["Show", "Hide"] },
-                    VisibilityStatus: { acceptReporters: false, items: ["Shown", "Hidden"] },
-                    MinMax: { acceptReporters: false, items: ["min", "max"] },
-                    AnchorMenu: { acceptReporters: false, items: [
-                        "center",
-                        "top-left",    "top-center",    "top-right",
-                        "middle-left", "middle-right",
-                        "bottom-left", "bottom-center", "bottom-right",
-                    ] },
-                },
-            };
-        }
-        FixPos (elementid) {
-            setTimeout(() => {
-                if (!elements[elementid]) return;
-                this.Position({
-                    id: elementid,
-                    x: metadata[elementid].x,
-                    y: metadata[elementid].y,
-                });
-            }, 1);
-        }
-        FixTransform (elementid) {
-            setTimeout(() => {
-                elements[elementid].style.transform =
-                    elements[elementid].tagName === "SVG"
-                        ? `translate(-50%, -50%) rotate(${metadata[elementid] - 90}deg)`
-                        : `rotate(${metadata[elementid] - 90}deg)`;
-            }, 1);
-        }
-        ClearAll () {
-            Object.entries(elements).forEach(([id, element]) => {
-                if (element.tagName === "INPUT" || element.tagName === "TEXTAREA")
-                    inputhold[id] = element.type === "checkbox" ? element.checked : element.value;
-            });
-            elements = {};
-            metadata = {};
-            elementbox.innerHTML = "";
-        }
-        Create (args) {
-            if (elements[args.id]) return;
-            const element = document.createElement(lookup[args.type]);
-            if (lookup[args.type] === "button") {
-                element.append(document.createElement("span"));
-                element.append(document.createElement("img"));
-            }
-            const boundingRect = element.getBoundingClientRect();
-            element.dataset.id = args.id;
-            element.style.position = "absolute";
-            element.style.pointerEvents = "auto";
-            element.style.userSelect = "none";
-            element.style.color = "black";
-            if (args.type === "Image") element.draggable = false;
-            elements[args.id] = element;
-            elementbox.append(element);
-            metadata[args.id] = {
-                x: 0, y: 0, direction: 90,
-                width: boundingRect.width, height: boundingRect.height,
-                hovered: false, clicked: false, mousedown: false,
-                anchor: "center",
-            };
-            this.FixPos(args.id);
-            if (args.type === "Input") {
-                metadata[args.id].inputdirty = false;
-                metadata[args.id].enterPressed = false;
-                element.addEventListener("input", () => (metadata[args.id].inputdirty = true));
-                attachEnterListener(element, args.id);
-            }
-            element.addEventListener("mouseover", () => (metadata[args.id].hovered = true));
-            element.addEventListener("mouseout", () => (metadata[args.id].hovered = false));
-            element.addEventListener("click", () => (metadata[args.id].clicked = true));
-            element.addEventListener("mousedown", () => (metadata[args.id].mousedown = true));
-            element.addEventListener("mouseup", () => (metadata[args.id].mousedown = false));
-            element.addEventListener("mouseleave", () => (metadata[args.id].mousedown = false));
-        }
-        Position (args) {
-            const element = elements[args.id];
-            if (!element) return;
-            const anchor = (metadata[args.id] && metadata[args.id].anchor) || "center";
-            const stageW = vm.runtime.stageWidth;
-            const stageH = vm.runtime.stageHeight;
-            const isSvg = element.tagName === "svg";
-            const elW = isSvg ? element.getBBox().width  : element.offsetWidth;
-            const elH = isSvg ? element.getBBox().height : element.offsetHeight;
-            const screenX = stageW / 2 + args.x;
-            const screenY = stageH / 2 - args.y;
-            // Horizontal
-            let left;
-            if (anchor.includes("right"))       left = screenX - elW;
-            else if (anchor.includes("left"))   left = screenX;
-            else                                 left = screenX - elW / 2;
-            // Vertical
-            let top;
-            if (anchor.includes("bottom"))      top = screenY - elH;
-            else if (anchor.includes("top"))    top = screenY;
-            else                                 top = screenY - elH / 2;
-            element.style.left = `${left}px`;
-            element.style.top  = `${top}px`;
-            metadata[args.id].x = args.x;
-            metadata[args.id].y = args.y;
-        }
-        AnchorPoint (args) {
-            if (!metadata[args.id]) return;
-            metadata[args.id].anchor = args.anchor;
-            this.FixPos(args.id);
-        }
-        Direction (args) {
-            const element = elements[args.id];
-            if (!element) return;
-            metadata[args.id].direction = args.dir;
-            element.style.transform = `rotate(${args.dir - 90}deg)`;
-        }
-        Scale (args) {
-            const element = elements[args.id];
-            if (!element) return;
-            element.style.width = `${args.width}px`;
-            element.style.height = `${args.height}px`;
-            metadata[args.id].width = args.width + "px";
-            metadata[args.id].height = args.height + "px";
-            element.style.objectFit = "fill";
-            this.FixPos(args.id);
-        }
-        Layer (args) {
-            const element = elements[args.id];
-            if (!element) return;
-            element.style.zIndex = args.layer;
-        }
-        Cursor (args) {
-            const element = elements[args.id];
-            if (!element) return;
-            element.style.cursor = args.cursor;
-        }
-        Color (args) {
-            const element = elements[args.id];
-            if (!element) return;
-            if (element.tagName === "DIV") {
-                element.style.backgroundColor = args.color;
-            } else {
-                element.style.color = args.color;
-            }
-        }
-        BackgroundColor (args) {
-            const element = elements[args.id];
-            if (!element) return;
-            element.style.backgroundColor = args.color;
-        }
-        CustomCSS (args) {
-            if (!elements[args.id]) return;
-            let style = document.getElementById(`LCGuiStyle_${args.id}`);
-            let lines = args.css.split(";");
-            if (!style) {
-                style = document.createElement("style");
-                style.id = `LCGuiStyle_${args.id}`;
-                document.head.append(style);
-            }
-            style.textContent = `[data-id='${args.id}']{\n${lines.join(" !important;\n") + " !important"}\n}`;
-            // Force a synchronous reflow so the styles are applied immediately.
-            // This means height/width measurements in the next Scratch tick are accurate.
-            void elements[args.id].getBoundingClientRect();
-        }
-        HtmlElement (args) {
-            if (elements[args.id]) return;
-            const element = document.createElement(args.htmltag.toLowerCase());
-            const boundingRect = element.getBoundingClientRect();
-            element.dataset.id = args.id;
-            element.style.position = "absolute";
-            element.style.pointerEvents = "auto";
-            element.style.userSelect = "none";
-            element.style.color = "black";
-            elements[args.id] = element;
-            elementbox.append(element);
-            metadata[args.id] = {
-                x: 0, y: 0, direction: 90,
-                width: boundingRect.width, height: boundingRect.height,
-                hovered: false, clicked: false, mousedown: false,
-                anchor: "center",
-            };
-            this.FixPos(args.id);
-            element.addEventListener("mouseover", () => (metadata[args.id].hovered = true));
-            element.addEventListener("mouseout", () => (metadata[args.id].hovered = false));
-            element.addEventListener("click", () => (metadata[args.id].clicked = true));
-            element.addEventListener("mousedown", () => (metadata[args.id].mousedown = true));
-            element.addEventListener("mouseup", () => (metadata[args.id].mousedown = false));
-            element.addEventListener("mouseleave", () => (metadata[args.id].mousedown = false));
-        }
-        Attribute (args) {
-            const element = elements[args.id];
-            if (!element) return;
-            const meta = metadata[args.id];
-            switch (args.attr) {
-                case "Cursor":
-                    return element.style.cursor === "" ? "default" : element.style.cursor;
-                case "Source":
-                    if (element.tagName != "IMG" && element.tagName != "VIDEO" && element.tagName != "svg") return;
-                    return element.tagName === "svg" ? element.outerHTML : element.src;
-                case "Width":
-                    return element.tagName === "SVG" ? element.getBBox().width : element.offsetWidth;
-                case "Height":
-                    return element.tagName === "SVG" ? element.getBBox().height : element.offsetHeight;
-                default:
-                    return meta[args.attr.toLowerCase()];
-            }
-        }
-        IsHovered (args) {
-            if (!elements[args.id]) return "";
-            return metadata[args.id].hovered;
-        }
-        IsMouseDown (args) {
-            if (!elements[args.id]) return false;
-            return !!metadata[args.id].mousedown;
-        }
-        Delete (args) {
-            const element = elements[args.id];
-            if (!element) return;
-            if (element.tagName === "INPUT" || element.tagName === "TEXTAREA")
-                inputhold[args.id] = element.type === "checkbox" ? element.checked : element.value;
-            if (document.getElementById(`LCGuiStyle_${args.id}`))
-                document.getElementById(`LCGuiStyle_${args.id}`).remove();
-            element.remove();
-            delete elements[args.id];
-            delete metadata[args.id];
-        }
-        Visibility (args) {
-            const element = elements[args.id];
-            if (!element) return;
-            if (args.menu === 'Hide') {
-                element.style.setProperty('display', 'none', 'important');
-                metadata[args.id]._hidden = true;
-            } else {
-                element.style.removeProperty('display');
-                metadata[args.id]._hidden = false;
-            }
-        }
-        ElementVisibility (args) {
-            const element = elements[args.id];
-            if (!element) return false;
-            return args.status === 'Shown' ? !metadata[args.id]._hidden : !!metadata[args.id]._hidden;
-        }
-        AllElements () {
-            return JSON.stringify(Object.keys(elements));
-        }
-        LabelText (args) {
-            const element = elements[args.id];
-            if (!element || element.tagName != "SPAN") return;
-            element.textContent = args.text;
-            this.FixPos(args.id);
-        }
-        LabelAlign (args) {
-            const element = elements[args.id];
-            if (!element || element.tagName !== "SPAN") return;
-            element.style.textAlign = args.align.toLowerCase();
-            this.FixPos(args.id);
-        }
-        LabelFontSize (args) {
-            const element = elements[args.id];
-            if (!element || element.tagName !== "SPAN") return;
-            element.style.fontSize = `${args.size}px`;
-            this.FixPos(args.id);
-        }
-        LabelFont (args) {
-            const element = elements[args.id];
-            if (!element || element.tagName !== "SPAN") return;
-            element.style.fontFamily = args.font;
-            this.FixPos(args.id);
-        }
-        ImageUrl (args) {
-            const element = elements[args.id];
-            if (!element || (element.tagName !== "IMG" && element.tagName !== "svg")) return;
-            if (element.tagName === "svg") {
-                elements[args.id] = replaceElement(elements[args.id], document.createElement("img"), args.id);
-            }
-            elements[args.id].src = args.url;
-            this.FixPos(args.id);
-        }
-        ImageCostume (args, util) {
-            const element = elements[args.id];
-            if (!element || (element.tagName != "IMG" && element.tagName != "svg")) return;
-            const costume = util.target.getCostumes().find(c => c.name === args.costume);
-            if (!costume) return;
-            if (costume.dataFormat === "svg") {
-                elements[args.id] = replaceElement(
-                    element,
-                    domParser.parseFromString(textDecoder.decode(costume.asset.data), "image/svg+xml").documentElement,
-                    args.id,
-                );
-            } else {
-                if (element.tagName === "svg") {
-                    elements[args.id] = replaceElement(element, document.createElement("img"), args.id);
-                }
-                elements[args.id].src = datauriFromCostume(args.costume, util.target);
-            }
-            this.FixPos(args.id);
-            this.FixTransform(args.id);
-        }
-        InputType (args) {
-            const element = elements[args.id];
-            if (!element || (element.tagName != "INPUT" && element.tagName != "TEXTAREA")) return;
-            if (args.input === "Text Area") {
-                elements[args.id] = replaceElement(element, document.createElement("textarea"), args.id);
-                elements[args.id].style.resize = "none";
-            } else {
-                if (element.tagName == "TEXTAREA") {
-                    elements[args.id] = replaceElement(element, document.createElement("input"), args.id);
-                }
-                elements[args.id].type = args.input;
-                if (args.input == "File") elements[args.id].value = null;
-            }
-            this.FixPos(args.id);
-        }
-        InputAccent (args) {
-            const element = elements[args.id];
-            if (!element || (element.tagName != "INPUT" && element.tagName != "TEXTAREA")) return;
-            element.style.accentColor = args.color;
-        }
-        InputPlaceholder (args) {
-            const element = elements[args.id];
-            if (!element || (element.tagName !== "INPUT" && element.tagName !== "TEXTAREA")) return;
-            element.setAttribute("placeholder", args.placeholder);
-        }
-        InputSetValue (args) {
-            const element = elements[args.id];
-            if (!element || (element.tagName !== "INPUT" && element.tagName !== "TEXTAREA")) return;
-            if (element.type === "checkbox") {
-                element.checked = Scratch.Cast.toBoolean(args.value);
-            } else {
-                element.value = args.value;
-            }
-        }
-        InputValue (args) {
-            const element = elements[args.id];
-            if (!element) {
-                if (inputhold[args.id]) return inputhold[args.id];
-                return "";
-            }
-            switch (element.type) {
-                case "checkbox": return element.checked;
-                case "file": return datauri(element.files[0]);
-                default: return element.value;
-            }
-        }
-        WhenInputChanged (args, util) {
-            const element = elements[args.id];
-            if (!element || (element.tagName !== "INPUT" && element.tagName !== "TEXTAREA")) return false;
-            const value = Scratch.Cast.toString(element.type === "checkbox" ? element.checked : element.value);
-            const blockId = util.thread.peekStack();
-            if (lastValues[blockId] !== value) {
-                lastValues[blockId] = value;
-                return true;
-            }
-            return false;
-        }
-        WhenEnterPressed (args) {
-            if (!metadata[args.id]) return false;
-            if (metadata[args.id].enterPressed) {
-                metadata[args.id].enterPressed = false;
-                return true;
-            }
-            return false;
-        }
-        EnterPressed (args) {
-            if (!metadata[args.id]) return false;
-            return !!metadata[args.id].enterPressed;
-        }
-        ResetEnter (args) {
-            if (!metadata[args.id]) return;
-            metadata[args.id].enterPressed = false;
-        }
-        InputMinMax (args) {
-            const element = elements[args.id];
-            if (!element || element.tagName !== "INPUT" || element.type !== "range") return;
-            if (args.type === "max") {
-                element.setAttribute("max", args.value);
-            } else {
-                element.setAttribute("min", args.value);
-            }
-        }
-        WhenClicked (args) {
-            if (!metadata[args.id]) return false;
-            if (metadata[args.id].clicked) {
-                metadata[args.id].clicked = false;
-                return true;
-            }
-            return false;
-        }
-        VideoSource (args) {
-            const element = elements[args.id];
-            if (!element || element.tagName !== "VIDEO") return;
-            element.src = args.url;
-            this.FixPos(args.id);
-        }
-        VideoControl (args) {
-            const element = elements[args.id];
-            if (!element || element.tagName !== "VIDEO") return;
-            switch (args.control) {
-                case "Play":  element.play(); break;
-                case "Stop":  element.pause(); element.currentTime = 0; break;
-                case "Pause": element.pause(); break;
-            }
-        }
-        VideoVolume (args) {
-            const element = elements[args.id];
-            if (!element || element.tagName !== "VIDEO") return;
-            element.volume = args.volume / 100;
-        }
-        VideoHtmlControls (args) {
-            const element = elements[args.id];
-            if (!element || element.tagName !== "VIDEO") return;
-            if (args.toggle === "Enabled") {
-                element.setAttribute("controls", "true");
-            } else {
-                element.removeAttribute("controls");
-            }
-        }
-        VideoLoop (args) {
-            const element = elements[args.id];
-            if (!element || element.tagName !== "VIDEO") return;
-            element.loop = args.toggle == "Enabled";
-        }
-        ElementWidth (args) {
-            const element = elements[args.id];
-            if (!element) return 0;
-            return element.tagName === 'svg'
-                ? element.getBBox().width
-                : element.getBoundingClientRect().width;
-        }
-        ElementHeight (args) {
-            const element = elements[args.id];
-            if (!element) return 0;
-            return element.tagName === 'svg'
-                ? element.getBBox().height
-                : element.getBoundingClientRect().height;
-        }
-        LabelLineCount (args) {
-            const element = elements[args.id];
-            if (!element || element.tagName !== 'SPAN') return 0;
-            const computed = window.getComputedStyle(element);
-            // Resolve lineHeight — 'normal' is ~1.2x fontSize per spec
-            let lineHeightPx = parseFloat(computed.lineHeight);
-            if (isNaN(lineHeightPx)) {
-                lineHeightPx = parseFloat(computed.fontSize) * 1.2;
-            }
-            if (!lineHeightPx || lineHeightPx <= 0) return 0;
-            // Use scrollHeight so it works even when the element is clipped
-            const totalHeight = element.scrollHeight;
-            return Math.max(1, Math.round(totalHeight / lineHeightPx));
-        }
-        ButtonText (args) {
-            const element = elements[args.id];
-            if (!element || element.tagName !== "BUTTON") return;
-            element.children[0].textContent = args.text;
-            this.FixPos(args.id);
-        }
+    updateSlider(id, opts);
+  }
+
+  function updateSlider(id, opts) {
+    const rec = sliders[id];
+    if (!rec) return;
+    const o = opts || {};
+    if (o.min   != null) rec.input.min   = o.min;
+    if (o.max   != null) rec.input.max   = o.max;
+    if (o.step  != null) rec.input.step  = o.step;
+    if (o.value != null) { rec.input.value = o.value; rec.value = Number(o.value); }
+    if (o.label != null) {
+      rec.labelEl.textContent = String(o.label);
+      rec.labelEl.style.display = String(o.label) ? "" : "none";
     }
-    Scratch.extensions.register(new ProjectInterfaces());
+    if (o.x != null) rec.x = Number(o.x);
+    if (o.y != null) rec.y = Number(o.y);
+    if (o.w != null) rec.w = Number(o.w);
+
+    rec.valueEl.textContent = formatValue(rec.value, rec.input.step);
+    applyPosition(rec);
+  }
+
+  function formatValue(v, step) {
+    const s = Number(step);
+    if (!isFinite(s) || s >= 1) return String(Math.round(v));
+    const decimals = Math.min(4, Math.max(0, -Math.floor(Math.log10(s))));
+    return Number(v).toFixed(decimals);
+  }
+
+  function removeSlider(id) {
+    const rec = sliders[id];
+    if (!rec) return;
+    rec.wrap.remove();
+    delete sliders[id];
+  }
+
+  function removeAll() {
+    for (const id of Object.keys(sliders)) removeSlider(id);
+  }
+
+  // Re-apply positions whenever the stage size changes
+  vm.runtime.on?.("STAGE_SIZE_CHANGED", () => {
+    for (const rec of Object.values(sliders)) applyPosition(rec);
+  });
+
+  // ------------------------------------------------------------------------
+  class SliderExtension {
+    getInfo() {
+      return {
+        id: "htmlSliders",
+        name: "HTML Sliders",
+        color1: "#6b53ff",
+        color2: "#5641e8",
+        blocks: [
+          {
+            opcode: "createSlider",
+            blockType: Scratch.BlockType.COMMAND,
+            text: "create slider [ID] at x:[X] y:[Y] width:[W]",
+            arguments: {
+              ID: { type: Scratch.ArgumentType.STRING, defaultValue: "volume" },
+              X:  { type: Scratch.ArgumentType.NUMBER, defaultValue: 0   },
+              Y:  { type: Scratch.ArgumentType.NUMBER, defaultValue: 0   },
+              W:  { type: Scratch.ArgumentType.NUMBER, defaultValue: 200 },
+            },
+          },
+          {
+            opcode: "configRange",
+            blockType: Scratch.BlockType.COMMAND,
+            text: "set slider [ID] min:[MIN] max:[MAX] step:[STEP]",
+            arguments: {
+              ID:   { type: Scratch.ArgumentType.STRING, defaultValue: "volume" },
+              MIN:  { type: Scratch.ArgumentType.NUMBER, defaultValue: 0   },
+              MAX:  { type: Scratch.ArgumentType.NUMBER, defaultValue: 100 },
+              STEP: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1   },
+            },
+          },
+          {
+            opcode: "setValue",
+            blockType: Scratch.BlockType.COMMAND,
+            text: "set slider [ID] value to [V]",
+            arguments: {
+              ID: { type: Scratch.ArgumentType.STRING, defaultValue: "volume" },
+              V:  { type: Scratch.ArgumentType.NUMBER, defaultValue: 50 },
+            },
+          },
+          {
+            opcode: "setLabel",
+            blockType: Scratch.BlockType.COMMAND,
+            text: "set slider [ID] label to [L]",
+            arguments: {
+              ID: { type: Scratch.ArgumentType.STRING, defaultValue: "volume" },
+              L:  { type: Scratch.ArgumentType.STRING, defaultValue: "Volume" },
+            },
+          },
+          {
+            opcode: "movePos",
+            blockType: Scratch.BlockType.COMMAND,
+            text: "move slider [ID] to x:[X] y:[Y]",
+            arguments: {
+              ID: { type: Scratch.ArgumentType.STRING, defaultValue: "volume" },
+              X:  { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 },
+              Y:  { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 },
+            },
+          },
+          {
+            opcode: "setWidth",
+            blockType: Scratch.BlockType.COMMAND,
+            text: "set slider [ID] width to [W]",
+            arguments: {
+              ID: { type: Scratch.ArgumentType.STRING, defaultValue: "volume" },
+              W:  { type: Scratch.ArgumentType.NUMBER, defaultValue: 200 },
+            },
+          },
+          "---",
+          {
+            opcode: "showHide",
+            blockType: Scratch.BlockType.COMMAND,
+            text: "[ACT] slider [ID]",
+            arguments: {
+              ACT: { type: Scratch.ArgumentType.STRING, menu: "showHideMenu", defaultValue: "show" },
+              ID:  { type: Scratch.ArgumentType.STRING, defaultValue: "volume" },
+            },
+          },
+          {
+            opcode: "removeOne",
+            blockType: Scratch.BlockType.COMMAND,
+            text: "remove slider [ID]",
+            arguments: {
+              ID: { type: Scratch.ArgumentType.STRING, defaultValue: "volume" },
+            },
+          },
+          {
+            opcode: "removeAllBlock",
+            blockType: Scratch.BlockType.COMMAND,
+            text: "remove all sliders",
+          },
+          "---",
+          {
+            opcode: "getValue",
+            blockType: Scratch.BlockType.REPORTER,
+            text: "value of slider [ID]",
+            arguments: {
+              ID: { type: Scratch.ArgumentType.STRING, defaultValue: "volume" },
+            },
+          },
+          {
+            opcode: "exists",
+            blockType: Scratch.BlockType.BOOLEAN,
+            text: "slider [ID] exists?",
+            arguments: {
+              ID: { type: Scratch.ArgumentType.STRING, defaultValue: "volume" },
+            },
+          },
+          {
+            opcode: "listSliders",
+            blockType: Scratch.BlockType.REPORTER,
+            text: "all slider IDs",
+          },
+          "---",
+          {
+            opcode: "whenChanged",
+            blockType: Scratch.BlockType.HAT,
+            text: "when slider [ID] changed",
+            isEdgeActivated: false,
+            arguments: {
+              ID: { type: Scratch.ArgumentType.STRING, defaultValue: "volume" },
+            },
+          },
+          {
+            opcode: "whenAnyChanged",
+            blockType: Scratch.BlockType.HAT,
+            text: "when any slider changed",
+            isEdgeActivated: false,
+          },
+          "---",
+          { blockType: Scratch.BlockType.LABEL, text: "Styling" },
+          {
+            opcode: "setSliderCSS",
+            blockType: Scratch.BlockType.COMMAND,
+            text: "set custom CSS for slider [ID] to [CSS]",
+            arguments: {
+              ID:  { type: Scratch.ArgumentType.STRING, defaultValue: "volume" },
+              CSS: { type: Scratch.ArgumentType.STRING,
+                     defaultValue: "accent-color: #ff4d6d" },
+            },
+          },
+          {
+            opcode: "injectCSS",
+            blockType: Scratch.BlockType.COMMAND,
+            text: "set global custom CSS to [CSS]",
+            arguments: {
+              CSS: { type: Scratch.ArgumentType.STRING,
+                     defaultValue:
+                       ".pm-sliders-overlay input[type=range]::-webkit-slider-thumb { background: #ff4d6d; }" },
+            },
+          },
+          {
+            opcode: "clearCSS",
+            blockType: Scratch.BlockType.COMMAND,
+            text: "clear global custom CSS",
+          },
+        ],
+        menus: {
+          showHideMenu: {
+            acceptReporters: false,
+            items: ["show", "hide"],
+          },
+        },
+      };
+    }
+
+    createSlider(args) {
+      createSlider(String(args.ID), {
+        x: Number(args.X), y: Number(args.Y), w: Number(args.W),
+      });
+    }
+    configRange(args) {
+      updateSlider(String(args.ID), {
+        min: Number(args.MIN), max: Number(args.MAX), step: Number(args.STEP),
+      });
+    }
+    setValue(args)  { updateSlider(String(args.ID), { value: Number(args.V) }); }
+    setLabel(args)  { updateSlider(String(args.ID), { label: String(args.L) }); }
+    movePos(args)   { updateSlider(String(args.ID), { x: Number(args.X), y: Number(args.Y) }); }
+    setWidth(args)  { updateSlider(String(args.ID), { w: Number(args.W) }); }
+
+    showHide(args) {
+      const r = sliders[String(args.ID)];
+      if (!r) return;
+      r.wrap.style.display = String(args.ACT) === "hide" ? "none" : "";
+    }
+    removeOne(args)  { removeSlider(String(args.ID)); }
+    removeAllBlock() { removeAll(); }
+
+    getValue(args) {
+      const r = sliders[String(args.ID)];
+      return r ? r.value : 0;
+    }
+    exists(args)   { return !!sliders[String(args.ID)]; }
+    listSliders()  { return JSON.stringify(Object.keys(sliders)); }
+
+    whenChanged(args, util) {
+      // Edge-triggered: fire once per actual change
+      const id = String(args.ID);
+      const r = sliders[id];
+      if (!r) return false;
+      const blockId = util.thread.peekStack();
+      const v = String(r.value);
+      if (lastValues[blockId] !== v) {
+        lastValues[blockId] = v;
+        return true;
+      }
+      return false;
+    }
+    whenAnyChanged(args, util) {
+      const blockId = util.thread.peekStack();
+      const snapshot = Object.entries(sliders).map(([k, r]) => k + ":" + r.value).join("|");
+      if (lastValues[blockId] !== snapshot) {
+        lastValues[blockId] = snapshot;
+        return true;
+      }
+      return false;
+    }
+
+    // Styling
+    setSliderCSS(args) {
+      const id = String(args.ID);
+      if (!sliders[id]) return;
+      const styleId = `pm-sliders-style-${id}`;
+      let tag = document.getElementById(styleId);
+      if (!tag) {
+        tag = document.createElement("style");
+        tag.id = styleId;
+        document.head.appendChild(tag);
+      }
+      const lines = String(args.CSS || "").split(";")
+        .map(s => s.trim()).filter(Boolean)
+        .map(s => s + " !important").join(";\n");
+      tag.textContent =
+        `.pm-sliders-overlay .pms-slider[data-id="${id}"] {\n${lines}\n}`;
+    }
+    injectCSS(args) { customCSS = String(args.CSS || ""); applyCustomCSS(); }
+    clearCSS()      { customCSS = ""; applyCustomCSS(); }
+  }
+
+  Scratch.extensions.register(new SliderExtension());
 })(Scratch);
