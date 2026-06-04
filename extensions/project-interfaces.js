@@ -26,8 +26,10 @@
   // Note: don't set width/height — addOverlay("scale") sizes & positions this
   // for us. Setting pointer-events:none on the container lets the project
   // receive clicks in empty space, while each slider re-enables pointer
-  // events on itself.
+  // events on itself. High z-index keeps sliders above variable monitors
+  // and other stage overlays.
   overlay.style.pointerEvents = "none";
+  overlay.style.zIndex = "9999";
   vm.renderer.addOverlay(overlay, "scale");
 
   // ------------------------------------------------------------------------
@@ -44,6 +46,7 @@
       color: #fff;
       user-select: none;
       -webkit-user-select: none;
+      z-index: 9999;
     }
     .pm-sliders-overlay .pms-label {
       font-size: 12px;
