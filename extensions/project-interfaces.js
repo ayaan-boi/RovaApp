@@ -23,13 +23,11 @@
   // ------------------------------------------------------------------------
   const overlay = document.createElement("div");
   overlay.className = "pm-sliders-overlay";
-  overlay.style.cssText = `
-    width: 100%;
-    height: 100%;
-    pointer-events: none;
-    position: relative;
-    overflow: visible;
-  `;
+  // Note: don't set width/height — addOverlay("scale") sizes & positions this
+  // for us. Setting pointer-events:none on the container lets the project
+  // receive clicks in empty space, while each slider re-enables pointer
+  // events on itself.
+  overlay.style.pointerEvents = "none";
   vm.renderer.addOverlay(overlay, "scale");
 
   // ------------------------------------------------------------------------
@@ -46,7 +44,6 @@
       color: #fff;
       user-select: none;
       -webkit-user-select: none;
-      transform: translate(-50%, -50%);
     }
     .pm-sliders-overlay .pms-label {
       font-size: 12px;
@@ -126,15 +123,20 @@
   const sliders = {};
   const lastValues = {}; // for "when changed" hat
 
-  // Convert Scratch stage coords (0,0 = center, +y = up) -> overlay % coords
+  // Convert Scratch stage coords (0,0 = center, +y = up) -> stage pixels.
+  // The overlay layer is sized to the stage in stage-pixel units, so we can
+  // just use raw pixel values for left/top/width.
   function applyPosition(rec) {
     const sw = vm.runtime.stageWidth  || 480;
     const sh = vm.runtime.stageHeight || 360;
-    // Position is the *center* of the slider (matches Scratch sprite convention)
-    rec.wrap.style.left  = ((sw / 2 + rec.x) / sw * 100) + "%";
-    rec.wrap.style.top   = ((sh / 2 - rec.y) / sh * 100) + "%";
-    // Width in stage pixels -> % of stage width
-    rec.wrap.style.width = (rec.w / sw * 100) + "%";
+    // Position the *center* of the slider at the given stage coord
+    const centerX = sw / 2 + rec.x;
+    const centerY = sh / 2 - rec.y;
+    rec.wrap.style.left  = (centerX - rec.w / 2) + "px";
+    rec.wrap.style.top   = centerY + "px";
+    rec.wrap.style.width = rec.w + "px";
+    // Vertically center using a transform on top only (doesn't affect width)
+    rec.wrap.style.transform = "translateY(-50%)";
   }
 
   function createSlider(id, opts) {
