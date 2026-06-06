@@ -18,7 +18,7 @@
   const Cast = Scratch.Cast;
   const vm = Scratch.vm;
 
-  const proxy = "https://api.codetabs.com/v1/proxy?quest=";
+  const proxy = "https://souncloudcorsproxy.ayaan-perf09.workers.dev/?";
   const SoundCloudAPI = "https://api-v2.soundcloud.com/";
   const baseSoundCloudUrl = "https://soundcloud.com/";
 
