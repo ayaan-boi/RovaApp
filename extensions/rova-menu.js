@@ -483,12 +483,12 @@
     loadingEl.innerHTML = '<div class="rova-menu-spinner"></div><div class="rova-menu-loading-text">Loading...</div>';
     el.appendChild(loadingEl);
 
-    // Attach to stage overlay — use Project Interfaces overlay if available,
-    // otherwise create our own overlay anchored to the Scratch stage
-    let overlay = document.querySelector('.LordCatInterfaces');
+    // Attach to stage overlay. We used to reuse LordCat's overlay if present,
+    // but its height can collapse to 0 in the packager which breaks layout.
+    // Always create our own overlay anchored directly to the Scratch stage.
+    let overlay = document.getElementById('rova-menu-overlay');
     if (!overlay) {
-      overlay = document.getElementById('rova-menu-overlay');
-      if (!overlay) {
+      {
         overlay = document.createElement('div');
         overlay.id = 'rova-menu-overlay';
         overlay.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;';
