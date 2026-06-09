@@ -63,6 +63,9 @@
         });
     };
 
+    // Costume to data URI — works in editor AND packager.
+    // In the packager, costume.asset is null but the renderer's skin has the
+    // image loaded as a data URI at skin._svgImage.src (or skin._canvas).
     const datauriFromCostume = (costume, target) => {
         let costumeIndex = target.getCostumeIndexByName(costume);
         if (costumeIndex === -1) {
@@ -78,7 +81,73 @@
                     break;
             }
         }
-        return target.sprite.costumes[costumeIndex].asset.encodeDataURI();
+        const c = target.sprite.costumes[costumeIndex];
+        if (!c) return null;
+
+        // Path 1 (editor): asset is loaded normally
+        if (c.asset && typeof c.asset.encodeDataURI === 'function') {
+            try { return c.asset.encodeDataURI(); } catch (e) { /* fall through */ }
+        }
+
+        // Path 2 (packager): grab data URI from the renderer skin
+        try {
+            const renderer = vm && vm.renderer;
+            if (renderer && c.skinId != null && renderer._allSkins) {
+                const skin = renderer._allSkins[c.skinId];
+                if (skin) {
+                    if (skin._svgImage && skin._svgImage.src) return skin._svgImage.src;
+                    if (skin._image && skin._image.src) return skin._image.src;
+                    if (skin._canvas && typeof skin._canvas.toDataURL === 'function') {
+                        try { return skin._canvas.toDataURL(); } catch (_) {}
+                    }
+                    if (skin._svgImage) {
+                        const cv = document.createElement('canvas');
+                        cv.width = skin._svgImage.naturalWidth || 64;
+                        cv.height = skin._svgImage.naturalHeight || 64;
+                        cv.getContext('2d').drawImage(skin._svgImage, 0, 0);
+                        return cv.toDataURL();
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('[ProjectInterfaces] datauriFromCostume renderer fallback failed:', e);
+        }
+
+        return null;
+    };
+
+    // Get SVG TEXT (not data URI) from a costume — used for inline <svg> elements
+    const svgTextFromCostume = (costume, target) => {
+        // Path 1: editor — read from asset
+        if (costume.asset && costume.asset.data) {
+            try {
+                const data = costume.asset.data;
+                return (typeof data === 'string') ? data : textDecoder.decode(data);
+            } catch (e) { /* fall through */ }
+        }
+        // Path 2: packager — decode from _svgImage.src
+        try {
+            const renderer = vm && vm.renderer;
+            if (renderer && costume.skinId != null && renderer._allSkins) {
+                const skin = renderer._allSkins[costume.skinId];
+                if (skin && skin._svgImage && skin._svgImage.src) {
+                    const src = skin._svgImage.src;
+                    // Strip 'data:image/svg+xml;utf8,' or ';base64,' prefix and decode
+                    if (src.startsWith('data:image/svg+xml;utf8,')) {
+                        return decodeURIComponent(src.slice('data:image/svg+xml;utf8,'.length));
+                    }
+                    if (src.startsWith('data:image/svg+xml;base64,')) {
+                        return atob(src.slice('data:image/svg+xml;base64,'.length));
+                    }
+                    if (src.startsWith('data:image/svg+xml,')) {
+                        return decodeURIComponent(src.slice('data:image/svg+xml,'.length));
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('[ProjectInterfaces] svgTextFromCostume fallback failed:', e);
+        }
+        return null;
     };
 
     // ── Helper: attach Enter listener to any input/textarea element ──
@@ -820,24 +889,52 @@
             this.FixPos(args.id);
         }
         ImageCostume (args, util) {
-            const element = elements[args.id];
-            if (!element || (element.tagName != "IMG" && element.tagName != "svg")) return;
-            const costume = util.target.getCostumes().find(c => c.name === args.costume);
-            if (!costume) return;
-            if (costume.dataFormat === "svg") {
-                elements[args.id] = replaceElement(
-                    element,
-                    domParser.parseFromString(textDecoder.decode(costume.asset.data), "image/svg+xml").documentElement,
-                    args.id,
-                );
-            } else {
-                if (element.tagName === "svg") {
-                    elements[args.id] = replaceElement(element, document.createElement("img"), args.id);
+            const apply = () => {
+                const element = elements[args.id];
+                if (!element || (element.tagName != "IMG" && element.tagName != "svg")) return false;
+                const costume = util.target.getCostumes().find(c => c.name === args.costume);
+                if (!costume) return false;
+                try {
+                    if (costume.dataFormat === "svg") {
+                        // Try to get SVG TEXT so we can inline it as an <svg> element
+                        const svgText = svgTextFromCostume(costume, util.target);
+                        if (svgText) {
+                            elements[args.id] = replaceElement(
+                                element,
+                                domParser.parseFromString(svgText, "image/svg+xml").documentElement,
+                                args.id,
+                            );
+                        } else {
+                            // Fallback: use as <img> with data URI
+                            const uri = datauriFromCostume(args.costume, util.target);
+                            if (!uri) return false;
+                            if (element.tagName === "svg") {
+                                elements[args.id] = replaceElement(element, document.createElement("img"), args.id);
+                            }
+                            elements[args.id].src = uri;
+                        }
+                    } else {
+                        const uri = datauriFromCostume(args.costume, util.target);
+                        if (!uri) return false;
+                        if (element.tagName === "svg") {
+                            elements[args.id] = replaceElement(element, document.createElement("img"), args.id);
+                        }
+                        elements[args.id].src = uri;
+                    }
+                    this.FixPos(args.id);
+                    this.FixTransform(args.id);
+                    return true;
+                } catch (e) {
+                    console.warn("[ProjectInterfaces] ImageCostume error:", e);
+                    return false;
                 }
-                elements[args.id].src = datauriFromCostume(args.costume, util.target);
-            }
-            this.FixPos(args.id);
-            this.FixTransform(args.id);
+            };
+            if (apply()) return;
+            // Retry while costume assets finish loading (packager race)
+            let tries = 0;
+            const timer = setInterval(() => {
+                if (apply() || ++tries > 40) clearInterval(timer);
+            }, 100);
         }
         InputType (args) {
             const element = elements[args.id];
