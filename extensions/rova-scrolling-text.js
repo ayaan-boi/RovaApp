@@ -1,5 +1,9 @@
-// Rova Scroll Text Extension
-// Scrolling marquee text elements on the stage
+// Rova Scroll Text Extension — V2 patched
+// Fixes:
+//  - create / createWithSpeed didn't apply position (text stuck at 0,0)
+//  - createEl scheduled scroll setup via rAF, causing a 1-frame flash of
+//    the text at the wrong place; we now set the position synchronously
+//    before the wrapper hits the DOM, eliminating the flash.
 
 (function (Scratch) {
   "use strict";
@@ -10,7 +14,7 @@
 
   const { BlockType, ArgumentType, Cast } = Scratch;
 
-  const texts = {}; // id -> { el, wrapper, inner, clone, scrolling, speed }
+  const texts = {}; // id -> { wrap, track, part1, clone, scrolling, speed, _x, _y, _css, _speed }
 
   function injectStyles() {
     if (document.getElementById('rova-scrolltext-styles')) return;
@@ -22,7 +26,10 @@
         overflow: hidden;
         pointer-events: none;
         white-space: nowrap;
+        /* Default off-screen until applyPosition runs — prevents flash at 0,0 */
+        visibility: hidden;
       }
+      .rova-scrolltext-wrap.positioned { visibility: visible; }
       .rova-scrolltext-track {
         display: inline-flex;
         white-space: nowrap;
@@ -61,37 +68,35 @@
 
   function createEl(id, text, opts) {
     if (texts[id]) texts[id].wrap.remove();
-
     injectStyles();
 
     const wrap = document.createElement('div');
     wrap.className = 'rova-scrolltext-wrap';
-    wrap.style.width    = (opts.width  || 200) + 'px';
-    wrap.style.height   = (opts.height || 30)  + 'px';
+    wrap.style.width  = (opts.width  || 200) + 'px';
+    wrap.style.height = (opts.height || 30)  + 'px';
 
     const track = document.createElement('div');
     track.className = 'rova-scrolltext-track';
-
     const part1 = document.createElement('span');
     part1.className = 'rova-scrolltext-part';
     part1.textContent = text;
-
     track.appendChild(part1);
     wrap.appendChild(track);
+
     getOverlay().appendChild(wrap);
 
-    const entry = { wrap, track, part1, clone: null, scrolling: false };
+    const entry = { wrap, track, part1, clone: null, scrolling: false, _x: 0, _y: 0 };
     texts[id] = entry;
 
-    // After paint — measure and start if needed
+    // After paint — measure and start scrolling if needed
     requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (texts[id] !== entry) return; // element was replaced
       const textW = part1.offsetWidth + 48;
       const wrapW = wrap.offsetWidth;
       if (textW > wrapW + 4) {
         const part2 = document.createElement('span');
         part2.className = 'rova-scrolltext-part';
         part2.textContent = text;
-        // Copy any inline styles already applied to part1
         part2.style.cssText = part1.style.cssText;
         track.appendChild(part2);
         entry.clone = part2;
@@ -115,6 +120,8 @@
     const h  = parseFloat(e.wrap.style.height) || 30;
     e.wrap.style.left = (sw / 2 + x) + 'px';
     e.wrap.style.top  = (sh / 2 - y - h) + 'px';
+    // Make it visible now that we have a real position — kills the flash at 0,0
+    e.wrap.classList.add('positioned');
   }
 
   class RovaScrollText {
@@ -185,43 +192,19 @@
               SPEED: { type: ArgumentType.NUMBER, defaultValue: 40 },
             }
           },
-          {
-            opcode: 'pause',
-            blockType: BlockType.COMMAND,
-            text: 'pause scroll text [ID]',
-            arguments: { ID: { type: ArgumentType.STRING, defaultValue: 'text1' } }
-          },
-          {
-            opcode: 'resume',
-            blockType: BlockType.COMMAND,
-            text: 'resume scroll text [ID]',
-            arguments: { ID: { type: ArgumentType.STRING, defaultValue: 'text1' } }
-          },
-          {
-            opcode: 'show',
-            blockType: BlockType.COMMAND,
-            text: 'show scroll text [ID]',
-            arguments: { ID: { type: ArgumentType.STRING, defaultValue: 'text1' } }
-          },
-          {
-            opcode: 'hide',
-            blockType: BlockType.COMMAND,
-            text: 'hide scroll text [ID]',
-            arguments: { ID: { type: ArgumentType.STRING, defaultValue: 'text1' } }
-          },
-          {
-            opcode: 'remove',
-            blockType: BlockType.COMMAND,
-            text: 'remove scroll text [ID]',
-            arguments: { ID: { type: ArgumentType.STRING, defaultValue: 'text1' } }
-          },
+          { opcode: 'pause',  blockType: BlockType.COMMAND, text: 'pause scroll text [ID]',
+            arguments: { ID: { type: ArgumentType.STRING, defaultValue: 'text1' } } },
+          { opcode: 'resume', blockType: BlockType.COMMAND, text: 'resume scroll text [ID]',
+            arguments: { ID: { type: ArgumentType.STRING, defaultValue: 'text1' } } },
+          { opcode: 'show',   blockType: BlockType.COMMAND, text: 'show scroll text [ID]',
+            arguments: { ID: { type: ArgumentType.STRING, defaultValue: 'text1' } } },
+          { opcode: 'hide',   blockType: BlockType.COMMAND, text: 'hide scroll text [ID]',
+            arguments: { ID: { type: ArgumentType.STRING, defaultValue: 'text1' } } },
+          { opcode: 'remove', blockType: BlockType.COMMAND, text: 'remove scroll text [ID]',
+            arguments: { ID: { type: ArgumentType.STRING, defaultValue: 'text1' } } },
           '---',
-          {
-            opcode: 'isScrolling',
-            blockType: BlockType.BOOLEAN,
-            text: 'scroll text [ID] is scrolling?',
-            arguments: { ID: { type: ArgumentType.STRING, defaultValue: 'text1' } }
-          },
+          { opcode: 'isScrolling', blockType: BlockType.BOOLEAN, text: 'scroll text [ID] is scrolling?',
+            arguments: { ID: { type: ArgumentType.STRING, defaultValue: 'text1' } } },
           '---',
           {
             opcode: 'setFade',
@@ -239,33 +222,32 @@
       };
     }
 
-create({ ID, TEXT, W, H }) {
-  const id = Cast.toString(ID);
-  const e  = createEl(id, Cast.toString(TEXT), {
-    width: Cast.toNumber(W),
-    height: Cast.toNumber(H),
-    speed: 40
-  });
-  e._x = 0; e._y = 0;
-  applyPosition(id);   // ← ADD THIS LINE
-}
+    create({ ID, TEXT, W, H }) {
+      const id = Cast.toString(ID);
+      const e  = createEl(id, Cast.toString(TEXT), {
+        width: Cast.toNumber(W),
+        height: Cast.toNumber(H),
+        speed: 40
+      });
+      e._speed = 40;
+      applyPosition(id); // ← FIX: actually position the wrapper
+    }
 
-createWithSpeed({ ID, TEXT, W, H, SPEED }) {
-  const id = Cast.toString(ID);
-  const e  = createEl(id, Cast.toString(TEXT), {
-    width: Cast.toNumber(W),
-    height: Cast.toNumber(H),
-    speed: Cast.toNumber(SPEED)
-  });
-  e._x = 0; e._y = 0;
-  applyPosition(id);   // ← ADD THIS LINE
-}
+    createWithSpeed({ ID, TEXT, W, H, SPEED }) {
+      const id = Cast.toString(ID);
+      const e  = createEl(id, Cast.toString(TEXT), {
+        width: Cast.toNumber(W),
+        height: Cast.toNumber(H),
+        speed: Cast.toNumber(SPEED)
+      });
+      e._speed = Cast.toNumber(SPEED);
+      applyPosition(id); // ← FIX
+    }
 
     setText({ ID, TEXT }) {
       const id = Cast.toString(ID);
       const e  = texts[id];
       if (!e) return;
-      // Rebuild with same dimensions and speed
       const w = parseFloat(e.wrap.style.width)  || 200;
       const h = parseFloat(e.wrap.style.height) || 20;
       const x = e._x || 0;
@@ -297,12 +279,10 @@ createWithSpeed({ ID, TEXT, W, H, SPEED }) {
       if (e.clone) {
         e.clone.style.cssText = css;
       } else {
-        // Clone may not exist yet — watch for it
         const observer = new MutationObserver(() => {
           if (e.clone) { e.clone.style.cssText = css; observer.disconnect(); }
         });
         observer.observe(e.track, { childList: true });
-        // Also apply after next frame in case clone is added in rAF
         requestAnimationFrame(() => { if (e.clone) e.clone.style.cssText = css; });
       }
     }
@@ -320,36 +300,18 @@ createWithSpeed({ ID, TEXT, W, H, SPEED }) {
       }
     }
 
-    pause({ ID }) {
-      const e = texts[Cast.toString(ID)];
-      if (e) e.track.style.animationPlayState = 'paused';
-    }
-
-    resume({ ID }) {
-      const e = texts[Cast.toString(ID)];
-      if (e) e.track.style.animationPlayState = 'running';
-    }
-
-    show({ ID }) {
-      const e = texts[Cast.toString(ID)];
-      if (e) e.wrap.style.display = 'block';
-    }
-
-    hide({ ID }) {
-      const e = texts[Cast.toString(ID)];
-      if (e) e.wrap.style.display = 'none';
-    }
-
+    pause({ ID })  { const e = texts[Cast.toString(ID)]; if (e) e.track.style.animationPlayState = 'paused'; }
+    resume({ ID }) { const e = texts[Cast.toString(ID)]; if (e) e.track.style.animationPlayState = 'running'; }
+    show({ ID })   { const e = texts[Cast.toString(ID)]; if (e) e.wrap.style.display = 'block'; }
+    hide({ ID })   { const e = texts[Cast.toString(ID)]; if (e) e.wrap.style.display = 'none'; }
     remove({ ID }) {
       const id = Cast.toString(ID);
       if (texts[id]) { texts[id].wrap.remove(); delete texts[id]; }
     }
-
     isScrolling({ ID }) {
       const e = texts[Cast.toString(ID)];
       return !!(e && e.scrolling);
     }
-
     setFade({ ID, ON }) {
       const e = texts[Cast.toString(ID)];
       if (!e) return;
