@@ -13,6 +13,67 @@
   // ── State ────────────────────────────────────────────────────────────────────
   let menus = {}; // id -> { el, items, clickedValue, clickedIndex, searchValue }
 
+  // ── Costume to Data URI helper ───────────────────────────────────────────────
+  // Works in both editor AND packager. In the packager, costume.asset is null,
+  // but the renderer's skin object has the SVG/bitmap loaded as a data URI.
+  function costumeToDataURI(target, costumeName) {
+    if (!target) return null;
+    const costumes = (target.getCostumes && target.getCostumes()) ||
+                     (target.sprite && target.sprite.costumes);
+    if (!costumes) return null;
+    const costume = costumes.find(c => c.name === costumeName);
+    if (!costume) return null;
+
+    // Path 1 (editor): asset is loaded normally
+    if (costume.asset && costume.asset.data) {
+      try {
+        if (costume.dataFormat === 'svg' ||
+            (costume.asset.assetType && costume.asset.assetType.runtimeFormat === 'svg')) {
+          const data = costume.asset.data;
+          const svgStr = (typeof data === 'string') ? data : new TextDecoder().decode(data);
+          return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgStr)));
+        }
+        if (typeof costume.asset.encodeDataURI === 'function') {
+          return costume.asset.encodeDataURI();
+        }
+      } catch (e) { /* fall through */ }
+    }
+
+    // Path 2 (packager): grab the data URI from the renderer skin
+    try {
+      const renderer = Scratch.vm && Scratch.vm.runtime && Scratch.vm.runtime.renderer;
+      if (renderer && costume.skinId != null && renderer._allSkins) {
+        const skin = renderer._allSkins[costume.skinId];
+        if (skin) {
+          // SVG skins keep their data URI in _svgImage.src
+          if (skin._svgImage && skin._svgImage.src) {
+            return skin._svgImage.src;
+          }
+          // Bitmap skins keep an HTMLImageElement
+          if (skin._image && skin._image.src) {
+            return skin._image.src;
+          }
+          // Last resort: render the skin's canvas to a data URI
+          if (skin._canvas && typeof skin._canvas.toDataURL === 'function') {
+            try { return skin._canvas.toDataURL(); } catch (_) {}
+          }
+          // Or use the _svgImage drawn onto a new canvas
+          if (skin._svgImage) {
+            const c = document.createElement('canvas');
+            c.width = skin._svgImage.naturalWidth || 64;
+            c.height = skin._svgImage.naturalHeight || 64;
+            c.getContext('2d').drawImage(skin._svgImage, 0, 0);
+            return c.toDataURL();
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[rovamenu] costumeToDataURI renderer fallback failed:', e);
+    }
+
+    return null;
+  }
+
   // ── Inject base styles ───────────────────────────────────────────────────────
   function injectBaseStyles() {
     // Versioned ID so old cached style tags from earlier extension versions
@@ -1378,25 +1439,27 @@
 
     // ── Create ─────────────────────────────────────────────────────────────────
     setTabIcon({ TAB, ID, COSTUME }, util) {
-      const m = menus[Cast.toString(ID)];
-      if (!m) return;
-      const idx = Cast.toNumber(TAB) - 1;
-      const btn = m.el.querySelectorAll('.rova-menu-tab-btn')[idx];
-      if (!btn) return;
-      try {
-        const target  = util.target;
-        const costume = target.getCostumes().find(c => c.name === COSTUME);
-        if (!costume) return;
-        let uri;
-        if (costume.dataFormat === 'svg') {
-          const svgStr = new TextDecoder().decode(costume.asset.data);
-          const b64    = btoa(unescape(encodeURIComponent(svgStr)));
-          uri = 'data:image/svg+xml;base64,' + b64;
-        } else {
-          uri = costume.asset.encodeDataURI();
-        }
+      const id = Cast.toString(ID);
+      const tabIdx = Cast.toNumber(TAB) - 1;
+      const costumeName = Cast.toString(COSTUME);
+      const apply = () => {
+        const m = menus[id];
+        if (!m) return false;
+        const btn = m.el.querySelectorAll('.rova-menu-tab-btn')[tabIdx];
+        if (!btn) return false;
+        const target = (util && util.target) ||
+                       (Scratch.vm && Scratch.vm.runtime.getEditingTarget && Scratch.vm.runtime.getEditingTarget());
+        const uri = costumeToDataURI(target, costumeName);
+        if (!uri) return false;
         btn.innerHTML = '<img src="' + uri + '" width="16" height="16" style="pointer-events:none">';
-      } catch(e) { console.warn('setTabIcon error', e); }
+        return true;
+      };
+      if (apply()) return;
+      // Retry — costume / menu might not be loaded yet (packager race)
+      let tries = 0;
+      const timer = setInterval(() => {
+        if (apply() || ++tries > 40) clearInterval(timer);
+      }, 100);
     }
 
     setTabIconURL({ TAB, ID, URL }) {
@@ -1949,41 +2012,20 @@
       const apply = () => {
         const m = menus[id];
         if (!m) return false;
-        try {
-          const target = (util && util.target) || (Scratch.vm && Scratch.vm.runtime.getEditingTarget && Scratch.vm.runtime.getEditingTarget());
-          if (!target) return false;
-          const costumes = target.getCostumes ? target.getCostumes() : (target.sprite && target.sprite.costumes);
-          if (!costumes) return false;
-          const costume = costumes.find(c => c.name === costumeName);
-          if (!costume) {
-            console.warn('[rovamenu] costume not found:', costumeName, '— available:', costumes.map(c => c.name).join(', '));
-            return false;
-          }
-          let uri;
-          if (costume.dataFormat === 'svg' || (costume.asset && costume.asset.assetType && costume.asset.assetType.runtimeFormat === 'svg')) {
-            const data = costume.asset.data;
-            const svgStr = (typeof data === 'string') ? data : new TextDecoder().decode(data);
-            const b64    = btoa(unescape(encodeURIComponent(svgStr)));
-            uri = 'data:image/svg+xml;base64,' + b64;
-          } else if (costume.asset && typeof costume.asset.encodeDataURI === 'function') {
-            uri = costume.asset.encodeDataURI();
-          } else {
-            return false;
-          }
-          m.likeIcon = uri;
-          renderList(id);
-          return true;
-        } catch (e) {
-          console.warn('[rovamenu] setLikeIconCostume error:', e);
-          return false;
-        }
+        const target = (util && util.target) ||
+                       (Scratch.vm && Scratch.vm.runtime.getEditingTarget && Scratch.vm.runtime.getEditingTarget());
+        const uri = costumeToDataURI(target, costumeName);
+        if (!uri) return false;
+        m.likeIcon = uri;
+        renderList(id);
+        return true;
       };
       if (apply()) return;
-      // Menu doesn't exist yet — retry a few times (packager race)
+      // Retry — costume / menu might not be loaded yet (packager race)
       let tries = 0;
       const timer = setInterval(() => {
-        if (apply() || ++tries > 20) clearInterval(timer);
-      }, 50);
+        if (apply() || ++tries > 40) clearInterval(timer);
+      }, 100);
     }
 
     setLikeIconURL({ ID, URL }) {
