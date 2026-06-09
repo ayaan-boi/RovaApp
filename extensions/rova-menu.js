@@ -483,15 +483,43 @@
     loadingEl.innerHTML = '<div class="rova-menu-spinner"></div><div class="rova-menu-loading-text">Loading...</div>';
     el.appendChild(loadingEl);
 
-    // Attach to stage overlay. We used to reuse LordCat's overlay if present,
-    // but its height can collapse to 0 in the packager which breaks layout.
-    // Always create our own overlay anchored directly to the Scratch stage.
-    let overlay = document.getElementById('rova-menu-overlay');
-    if (!overlay) {
-      {
+    // Attach to stage overlay. We prefer to share LordCat's overlay so all
+    // UI elements live on the same layer (matching z-order, easier styling).
+    // PATCH_MARKER_V4: reuse LordCat's overlay, but force its height if it
+    // collapsed to 0 in the packager (its known bug).
+    let overlay = document.querySelector('.LordCatInterfaces');
+    if (overlay) {
+      // Fix the LordCat-height-collapses-in-packager bug — make sure the
+      // overlay always has a usable height so children can be positioned.
+      const fixHeight = () => {
+        if (!overlay) return;
+        const r = overlay.getBoundingClientRect();
+        if (r.height < 10) {
+          const canvas = (Scratch.vm && Scratch.vm.runtime && Scratch.vm.runtime.renderer && Scratch.vm.runtime.renderer.canvas) ||
+                         document.querySelector('canvas.stage') ||
+                         document.querySelector('canvas[class*="stage"]') ||
+                         document.querySelector('canvas');
+          if (canvas) {
+            const cr = canvas.getBoundingClientRect();
+            overlay.style.height = cr.height + 'px';
+            overlay.style.minHeight = cr.height + 'px';
+          } else {
+            overlay.style.height = '100%';
+            overlay.style.minHeight = '100%';
+          }
+        }
+      };
+      fixHeight();
+      window.addEventListener('resize', fixHeight);
+      setInterval(fixHeight, 500);
+    } else {
+      // LordCat not loaded — create our own overlay
+      overlay = document.getElementById('rova-menu-overlay');
+      if (!overlay) {
         overlay = document.createElement('div');
         overlay.id = 'rova-menu-overlay';
         overlay.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;';
+        console.log('[rovamenu] PATCH_MARKER_V4 — own overlay (LordCat not found)');
         try {
           if (Scratch.vm && Scratch.vm.renderer && typeof Scratch.vm.renderer.addOverlay === 'function') {
             Scratch.vm.renderer.addOverlay(overlay, 'scale');
@@ -1417,13 +1445,30 @@
     }
 
     setMenuPosition({ ID, X, Y }) {
-      const m = menus[Cast.toString(ID)];
-      if (!m) return;
-      const vm = Scratch.vm;
-      const sw = vm.runtime.stageWidth;
-      const sh = vm.runtime.stageHeight;
-      m.el.style.left = (sw / 2 + Cast.toNumber(X)) + 'px';
-      m.el.style.top  = (sh / 2 - Cast.toNumber(Y) - Cast.toNumber(m.el.style.height || 360)) + 'px';
+      const id = Cast.toString(ID);
+      const x = Cast.toNumber(X);
+      const y = Cast.toNumber(Y);
+      const apply = () => {
+        const m = menus[id];
+        if (!m) return false;
+        const vm = Scratch.vm;
+        const sw = vm.runtime.stageWidth;
+        const sh = vm.runtime.stageHeight;
+        const h  = parseFloat(m.el.style.height) || 360;
+        m.el.style.left = (sw / 2 + x) + 'px';
+        m.el.style.top  = (sh / 2 - y - h) + 'px';
+        // Store the requested position so we can re-apply if the menu rebuilds
+        m._pos = { x, y };
+        return true;
+      };
+      if (apply()) return;
+      // Menu doesn't exist yet — retry a few times. This handles the
+      // common packager race condition where "set position" runs in the
+      // same tick as "create menu" before the DOM is in place.
+      let tries = 0;
+      const timer = setInterval(() => {
+        if (apply() || ++tries > 20) clearInterval(timer);
+      }, 50);
     }
 
     setMenuCSS({ ID, CSS }) {
@@ -1899,23 +1944,46 @@
     }
 
     setLikeIconCostume({ ID, COSTUME }, util) {
-      const m = menus[Cast.toString(ID)];
-      if (!m) return;
-      try {
-        const target  = util.target;
-        const costume = target.getCostumes().find(c => c.name === COSTUME);
-        if (!costume) return;
-        let uri;
-        if (costume.dataFormat === 'svg') {
-          const svgStr = new TextDecoder().decode(costume.asset.data);
-          const b64    = btoa(unescape(encodeURIComponent(svgStr)));
-          uri = 'data:image/svg+xml;base64,' + b64;
-        } else {
-          uri = costume.asset.encodeDataURI();
+      const id = Cast.toString(ID);
+      const costumeName = Cast.toString(COSTUME);
+      const apply = () => {
+        const m = menus[id];
+        if (!m) return false;
+        try {
+          const target = (util && util.target) || (Scratch.vm && Scratch.vm.runtime.getEditingTarget && Scratch.vm.runtime.getEditingTarget());
+          if (!target) return false;
+          const costumes = target.getCostumes ? target.getCostumes() : (target.sprite && target.sprite.costumes);
+          if (!costumes) return false;
+          const costume = costumes.find(c => c.name === costumeName);
+          if (!costume) {
+            console.warn('[rovamenu] costume not found:', costumeName, '— available:', costumes.map(c => c.name).join(', '));
+            return false;
+          }
+          let uri;
+          if (costume.dataFormat === 'svg' || (costume.asset && costume.asset.assetType && costume.asset.assetType.runtimeFormat === 'svg')) {
+            const data = costume.asset.data;
+            const svgStr = (typeof data === 'string') ? data : new TextDecoder().decode(data);
+            const b64    = btoa(unescape(encodeURIComponent(svgStr)));
+            uri = 'data:image/svg+xml;base64,' + b64;
+          } else if (costume.asset && typeof costume.asset.encodeDataURI === 'function') {
+            uri = costume.asset.encodeDataURI();
+          } else {
+            return false;
+          }
+          m.likeIcon = uri;
+          renderList(id);
+          return true;
+        } catch (e) {
+          console.warn('[rovamenu] setLikeIconCostume error:', e);
+          return false;
         }
-        m.likeIcon = uri;
-        renderList(Cast.toString(ID));
-      } catch (e) { console.warn('setLikeIconCostume error', e); }
+      };
+      if (apply()) return;
+      // Menu doesn't exist yet — retry a few times (packager race)
+      let tries = 0;
+      const timer = setInterval(() => {
+        if (apply() || ++tries > 20) clearInterval(timer);
+      }, 50);
     }
 
     setLikeIconURL({ ID, URL }) {
