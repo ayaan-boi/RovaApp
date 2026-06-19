@@ -18,8 +18,11 @@
   const Cast = Scratch.Cast;
   const vm = Scratch.vm;
 
-  // Multiple CORS proxies — extension tries them in order, falls back on failure
+  // Multiple CORS proxies — extension tries them in order, falls back on failure.
+  // Your own Cloudflare worker is listed FIRST (fast, reliable, no rate limits).
+  // The public proxies below are fallbacks in case the worker is ever down.
   const proxies = [
+    "https://souncloudcorsproxy.ayaan-perf09.workers.dev/?",
     "https://api.allorigins.win/raw?url=",
     "https://api.codetabs.com/v1/proxy?quest=",
     "https://corsproxy.org/?",
