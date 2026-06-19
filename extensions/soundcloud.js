@@ -18,7 +18,111 @@
   const Cast = Scratch.Cast;
   const vm = Scratch.vm;
 
-  const proxy = "https://souncloudcorsproxy.ayaan-perf09.workers.dev/?";
+  // Multiple CORS proxies — extension tries them in order, falls back on failure
+  const proxies = [
+    "https://api.allorigins.win/raw?url=",
+    "https://api.codetabs.com/v1/proxy?quest=",
+    "https://corsproxy.org/?",
+    "https://proxy.cors.sh/",
+  ];
+  let proxyIndex = 0;
+  const proxy = proxies[proxyIndex]; // kept for backwards compatibility
+
+  // Smart fetch that tries proxies in order until one works.
+  // If a 401 (bad client ID) comes back, automatically try to fetch a fresh
+  // client ID once and retry — so a stale ID heals itself silently.
+  let _retryingClientId = false;
+  async function proxiedFetch(targetUrl, options) {
+    let lastError = null;
+    for (let i = 0; i < proxies.length; i++) {
+      const idx = (proxyIndex + i) % proxies.length;
+      const p = proxies[idx];
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 8000);
+        const res = await fetch(p + encodeURIComponent(targetUrl), {
+          ...options,
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        if (res.ok) {
+          proxyIndex = idx;
+          return res;
+        }
+        // Auto-heal: 401 = bad client_id. Try to refresh it ONCE then retry.
+        if (res.status === 401 && !_retryingClientId && targetUrl.includes('client_id=')) {
+          _retryingClientId = true;
+          try {
+            console.warn('[SoundCloud] Got 401, attempting to refresh client ID...');
+            await ext_refreshClientId();
+            const newUrl = targetUrl.replace(/client_id=[^&]+/, 'client_id=' + clientID);
+            const retryRes = await fetch(p + encodeURIComponent(newUrl), {
+              ...options,
+              signal: (new AbortController()).signal,
+            });
+            if (retryRes.ok) {
+              proxyIndex = idx;
+              console.info('[SoundCloud] Client ID refreshed, request succeeded.');
+              return retryRes;
+            }
+            lastError = new Error('Refreshed client ID still got HTTP ' + retryRes.status);
+          } catch (e) {
+            lastError = e;
+          } finally {
+            _retryingClientId = false;
+          }
+        } else {
+          lastError = new Error("HTTP " + res.status + " from " + p);
+        }
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    throw lastError || new Error("All CORS proxies failed");
+  }
+
+  // Internal helper for the auto-retry above (calls the same logic as
+  // fetchFreshClient block, defined below).
+  // SoundCloud splits its app across many JS bundles; only ONE contains
+  // the client_id. We try each one until we find a match.
+  async function ext_refreshClientId() {
+    const response = await fetch(proxies[proxyIndex] + encodeURIComponent(baseSoundCloudUrl));
+    if (!response.ok) throw new Error('Could not fetch soundcloud.com to refresh client ID');
+    const html = await response.text();
+    // Find ALL JS bundle URLs, not just the first one
+    const bundles = [...new Set(html.match(/https:\/\/a-v2\.sndcdn\.com\/assets\/[^"]+\.js/g) || [])];
+    if (!bundles.length) throw new Error('Could not find any JS bundle URLs');
+    // Try each bundle until we find a working client_id (require length 20+)
+    for (const url of bundles) {
+      try {
+        const jsResponse = await fetch(proxies[proxyIndex] + encodeURIComponent(url));
+        if (!jsResponse.ok) continue;
+        const jsContent = await jsResponse.text();
+        const m = jsContent.match(/client_id:"([a-zA-Z0-9]{20,})"/);
+        if (m && m[1]) {
+          clientID = m[1];
+          console.info('[SoundCloud] Fresh client ID extracted from', url);
+          return clientID;
+        }
+      } catch (e) { /* try next bundle */ }
+    }
+    throw new Error('Could not extract client ID from any of the ' + bundles.length + ' bundles');
+  }
+
+  // Safe JSON parser — never throws; returns null if body is empty/invalid.
+  // Use this instead of `await safeJson(res)` everywhere to avoid the
+  // "Unexpected end of JSON input" crash when the proxy or API returns empty.
+  async function safeJson(res) {
+    if (!res) return null;
+    try {
+      const text = await res.text();
+      if (!text || !text.trim()) return null;
+      return JSON.parse(text);
+    } catch (e) {
+      console.warn('[SoundCloud] Failed to parse response JSON:', e.message);
+      return null;
+    }
+  }
   const SoundCloudAPI = "https://api-v2.soundcloud.com/";
   const baseSoundCloudUrl = "https://soundcloud.com/";
 
@@ -149,6 +253,18 @@
             opcode: "getTrackMp3",
             blockType: Scratch.BlockType.REPORTER,
             text: Scratch.translate("get mp3 of track ID [ID]"),
+            arguments: { ID: { type: Scratch.ArgumentType.NUMBER, defaultValue: 241049935 } }
+          },
+          {
+            opcode: "isTrackPlayable",
+            blockType: Scratch.BlockType.REPORTER,
+            text: Scratch.translate("playability of track ID [ID]"),
+            arguments: { ID: { type: Scratch.ArgumentType.NUMBER, defaultValue: 241049935 } }
+          },
+          {
+            opcode: "getTrackFormat",
+            blockType: Scratch.BlockType.REPORTER,
+            text: Scratch.translate("format of track ID [ID]"),
             arguments: { ID: { type: Scratch.ArgumentType.NUMBER, defaultValue: 241049935 } }
           },
           {
@@ -353,30 +469,44 @@
       };
     }
 
-    // ── Original methods (unchanged) ──────────────────────────────────────────
+    // Fetches a fresh client ID from SoundCloud's website.
+    // SoundCloud splits its app into many JS bundles — only one contains
+    // the client_id, and that file changes hash often. We try ALL of them
+    // until we find a match.
     async fetchFreshClient() {
       try {
-        const response = await fetch(proxy + encodeURIComponent(baseSoundCloudUrl));
+        const response = await proxiedFetch(baseSoundCloudUrl);
         const html = await response.text();
-        const jsFileMatch = html.match(/https:\/\/a-v2\.sndcdn\.com\/assets\/[^\"]*\.js/);
-        if (jsFileMatch) {
-          const jsResponse = await fetch(proxy + encodeURIComponent(jsFileMatch[0]));
-          const jsContent  = await jsResponse.text();
-          const clientIDMatch = jsContent.match(/client_id:"([a-zA-Z0-9]*)"/);
-          if (clientIDMatch?.[1]) { clientID = clientIDMatch[1]; }
+        const bundles = [...new Set(html.match(/https:\/\/a-v2\.sndcdn\.com\/assets\/[^"]+\.js/g) || [])];
+        for (const url of bundles) {
+          try {
+            const jsResponse = await proxiedFetch(url);
+            if (!jsResponse.ok) continue;
+            const jsContent = await jsResponse.text();
+            // Require length 20+ so we don't accept an empty match
+            const m = jsContent.match(/client_id:"([a-zA-Z0-9]{20,})"/);
+            if (m && m[1]) {
+              clientID = m[1];
+              console.info('[SoundCloud] Fresh client ID extracted from', url);
+              return;
+            }
+          } catch (e) { /* try next bundle */ }
         }
+        console.warn('[SoundCloud] Could not find client_id in any bundle (' + bundles.length + ' tried)');
       } catch(e) { console.error("Error fetching fresh client ID:", e); }
     }
 
-    isClientIDReady() { return clientID && clientID.length > 0; }
+    // Check that the ID is set AND looks like a real one (≥20 chars).
+    // Previously this returned true for empty / partial IDs.
+    isClientIDReady() { return !!(clientID && clientID.length >= 20); }
     setClient(args)   { clientID = args.ID; }
     getClientID()     { return clientID; }
 
     async testClient() {
       try {
         const url = `${SoundCloudAPI}charts?kind=trending&genre=soundcloud%3Agenres%3Aall-music&client_id=${clientID}&limit=1`;
-        const req  = await fetch(proxy + encodeURIComponent(url));
-        const json = await req.json();
+        const req  = await proxiedFetch(url);
+        const json = await safeJson(req);
         return !!(json?.collection?.length > 0);
       } catch(e) { return false; }
     }
@@ -385,9 +515,9 @@
       const url        = Cast.toString(args.URL);
       const thing      = Cast.toString(args.THING);
       const resolveUrl = `${SoundCloudAPI}resolve?url=${encodeURIComponent(url)}&client_id=${clientID}`;
-      const req        = await fetch(proxy + encodeURIComponent(resolveUrl));
-      const json       = await req.json();
-      return (thing === "track" || thing === "artist") ? json.id : "";
+      const req        = await proxiedFetch(resolveUrl);
+      const json       = await safeJson(req);
+      return (thing === "track" || thing === "artist") ? (json?.id || "") : "";
     }
 
     async getTrackAtt(args) {
@@ -396,8 +526,8 @@
       const cacheId = `track-${id}`;
       let track     = getCache(cacheId);
       if (!track) {
-        const req = await fetch(proxy + encodeURIComponent(`${SoundCloudAPI}tracks/${id}?client_id=${clientID}`));
-        track = await req.json();
+        const req = await proxiedFetch(`${SoundCloudAPI}tracks/${id}?client_id=${clientID}`);
+        track = await safeJson(req);
         setCache(cacheId, track);
       }
       if (!track) return "";
@@ -422,22 +552,69 @@
     async getTrackMp3(args) {
       const id = Cast.toNumber(args.ID);
       try {
-        const req  = await fetch(proxy + encodeURIComponent(`${SoundCloudAPI}tracks/${id}?client_id=${clientID}`));
+        const req  = await proxiedFetch(`${SoundCloudAPI}tracks/${id}?client_id=${clientID}`);
         if (!req.ok) return "";
-        const json = await req.json();
+        const json = await safeJson(req);
         if (json?.media?.transcodings) {
-          let t = json.media.transcodings.find(t => t.format.protocol === "progressive" && t.format.mime_type === "audio/mpeg");
-          if (!t) t = json.media.transcodings.find(t => t.format.protocol === "progressive");
-          if (!t) t = json.media.transcodings[0];
+          // Filter out DRM-encrypted transcodings (cbcs / encrypted) — these
+          // can't be played outside SoundCloud's official player.
+          if (!json?.media?.transcodings) return "";
+          const usable = json.media.transcodings.filter(t => {
+            const u = String(t.url || '');
+            return !u.includes('/cbcs/') && !u.includes('encrypted') &&
+                   t.format?.protocol !== 'encrypted-hls';
+          });
+
+          // Prefer progressive MP3 (works in any audio engine)
+          let t = usable.find(t => t.format.protocol === "progressive" && t.format.mime_type === "audio/mpeg");
+          if (!t) t = usable.find(t => t.format.protocol === "progressive");
+          // Fall back to non-DRM HLS (notSound handles it via hls.js)
+          if (!t) t = usable.find(t => t.format.protocol === "hls");
+          if (!t) t = usable[0];
+
+          // If everything was DRM, give up
+          if (!t) {
+            console.warn(`[SoundCloud] Track ${id}: all transcodings are DRM-protected (cbcs). Skipping.`);
+            return "";
+          }
+
           if (t?.url) {
-            const sReq  = await fetch(proxy + encodeURIComponent(`${t.url}?client_id=${clientID}`));
+            const sReq  = await proxiedFetch(`${t.url}?client_id=${clientID}`);
             if (!sReq.ok) return "";
-            const sJson = await sReq.json();
-            return sJson.url || "";
+            const sJson = await safeJson(sReq);
+            const streamUrl = sJson.url || "";
+            // Safety net: if SC returned a DRM URL anyway, reject it
+            if (streamUrl.includes('/cbcs/')) {
+              console.warn(`[SoundCloud] Track ${id}: stream URL is DRM-encrypted. Skipping.`);
+              return "";
+            }
+            return streamUrl;
           }
         }
       } catch(e) { console.error("Error getting track MP3:", e); }
       return "";
+    }
+
+    // Reports whether a track can be played by your project.
+    // Returns "playable", "drm", or "unavailable".
+    async isTrackPlayable(args) {
+      const id = Cast.toNumber(args.ID);
+      try {
+        const req  = await proxiedFetch(`${SoundCloudAPI}tracks/${id}?client_id=${clientID}`);
+        if (!req.ok) return "unavailable";
+        const json = await safeJson(req);
+        if (!json?.media?.transcodings || json.media.transcodings.length === 0) {
+          return "unavailable";
+        }
+        if (!json?.media?.transcodings) return "";
+          const usable = json.media.transcodings.filter(t => {
+          const u = String(t.url || '');
+          return !u.includes('/cbcs/') && !u.includes('encrypted') &&
+                 t.format?.protocol !== 'encrypted-hls';
+        });
+        if (usable.length === 0) return "drm";
+        return "playable";
+      } catch(e) { return "unavailable"; }
     }
 
     async getTrackComment(args) {
@@ -447,8 +624,8 @@
       const limit  = Cast.toNumber(args.NUM2);
       let url = `${SoundCloudAPI}tracks/${id}/comments?client_id=${clientID}&limit=${limit}&offset=${offset}`;
       if (type === "popular") url += "&sort=popular";
-      const req  = await fetch(proxy + encodeURIComponent(url));
-      const json = await req.json();
+      const req  = await proxiedFetch(url);
+      const json = await safeJson(req);
       return json?.collection ? JSON.stringify(json.collection.map(item => item.id)) : "[]";
     }
 
@@ -461,8 +638,8 @@
 
       try {
         const url  = `${SoundCloudAPI}tracks/${id}/related?limit=${count}&client_id=${clientID}`;
-        const req  = await fetch(proxy + encodeURIComponent(url));
-        const json = await req.json();
+        const req  = await proxiedFetch(url);
+        const json = await safeJson(req);
         if (json?.collection) {
           fetchedRelated = json.collection.map(t => t.id).filter(Boolean);
           // Cache track info for instant attribute retrieval
@@ -490,8 +667,8 @@
         if (cached) return cached;
         try {
           const url  = `${SoundCloudAPI}tracks/${id}/related?limit=${count}&client_id=${clientID}`;
-          const req  = await fetch(proxy + encodeURIComponent(url));
-          const json = await req.json();
+          const req  = await proxiedFetch(url);
+          const json = await safeJson(req);
           const tracks = json?.collection || [];
           setCache(cacheKey, tracks);
           return tracks;
@@ -542,11 +719,11 @@
 
       try {
         const url  = `${SoundCloudAPI}tracks/${id}/comments?sort=${sort}&threaded=1&limit=${count}&client_id=${clientID}`;
-        const req  = await fetch(proxy + encodeURIComponent(url));
-        const json = await req.json();
+        const req  = await proxiedFetch(url);
+        const json = await safeJson(req);
 
         if (json?.collection) {
-          const comments = json.collection;
+          const comments = json?.collection || [];
 
           // SoundCloud includes basic user info inline on each comment
           // Use that first, then fill gaps with separate user fetches
@@ -563,8 +740,8 @@
             try {
               const cached = getCache("A" + uid);
               if (cached) { userMap[uid] = cached; return; }
-              const uReq  = await fetch(proxy + encodeURIComponent(`${SoundCloudAPI}users/${uid}?client_id=${clientID}`));
-              const uJson = await uReq.json();
+              const uReq  = await proxiedFetch(`${SoundCloudAPI}users/${uid}?client_id=${clientID}`);
+              const uJson = await safeJson(uReq);
               if (uJson?.username) { userMap[uid] = uJson; setCache("A" + uid, uJson); }
             } catch(e) {}
           }));
@@ -607,9 +784,10 @@
     async searchTracks(args) {
       const query = Cast.toString(args.QUERY);
       const limit = Cast.toNumber(args.NUM);
-      const req   = await fetch(proxy + encodeURIComponent(`${SoundCloudAPI}search/tracks?q=${encodeURIComponent(query)}&client_id=${clientID}&limit=${limit}`));
-      const json  = await req.json();
+      const req   = await proxiedFetch(`${SoundCloudAPI}search/tracks?q=${encodeURIComponent(query)}&client_id=${clientID}&limit=${limit}`);
+      const json  = await safeJson(req);
       if (json?.collection) {
+        if (!json?.collection) return "[]";
         json.collection.forEach(track => setCache(`track-${track.id}`, track));
         return JSON.stringify(json.collection.map(item => item.id));
       }
@@ -618,9 +796,10 @@
 
     async getTrendingSongs(args) {
       const limit = Cast.toNumber(args.NUM);
-      const req   = await fetch(proxy + encodeURIComponent(`${SoundCloudAPI}charts?kind=trending&genre=soundcloud%3Agenres%3Aall-music&client_id=${clientID}&limit=${limit}`));
-      const json  = await req.json();
+      const req   = await proxiedFetch(`${SoundCloudAPI}charts?kind=trending&genre=soundcloud%3Agenres%3Aall-music&client_id=${clientID}&limit=${limit}`);
+      const json  = await safeJson(req);
       if (json?.collection) {
+        if (!json?.collection) return "[]";
         json.collection.forEach(item => { if (item.track) setCache(`track-${item.track.id}`, item.track); });
         return JSON.stringify(json.collection.map(item => item.track.id));
       }
@@ -633,8 +812,8 @@
       const cacheId = `artist-${id}`;
       let artist    = getCache(cacheId);
       if (!artist) {
-        const req = await fetch(proxy + encodeURIComponent(`${SoundCloudAPI}users/${id}?client_id=${clientID}`));
-        artist = await req.json();
+        const req = await proxiedFetch(`${SoundCloudAPI}users/${id}?client_id=${clientID}`);
+        artist = await safeJson(req);
         setCache(cacheId, artist);
       }
       if (!artist) return "";
@@ -646,8 +825,8 @@
       const id     = Cast.toNumber(args.ID);
       const offset = Cast.toNumber(args.NUM1);
       const limit  = Cast.toNumber(args.NUM2);
-      const req    = await fetch(proxy + encodeURIComponent(`${SoundCloudAPI}users/${id}/followers?client_id=${clientID}&limit=${limit}&offset=${offset}`));
-      const json   = await req.json();
+      const req    = await proxiedFetch(`${SoundCloudAPI}users/${id}/followers?client_id=${clientID}&limit=${limit}&offset=${offset}`);
+      const json   = await safeJson(req);
       return json?.collection ? JSON.stringify(json.collection.map(item => item.id)) : "[]";
     }
 
@@ -655,17 +834,18 @@
       const id     = Cast.toNumber(args.ID);
       const offset = Cast.toNumber(args.NUM1);
       const limit  = Cast.toNumber(args.NUM2);
-      const req    = await fetch(proxy + encodeURIComponent(`${SoundCloudAPI}users/${id}/tracks?client_id=${clientID}&limit=${limit}&offset=${offset}`));
-      const json   = await req.json();
+      const req    = await proxiedFetch(`${SoundCloudAPI}users/${id}/tracks?client_id=${clientID}&limit=${limit}&offset=${offset}`);
+      const json   = await safeJson(req);
       return json?.collection ? JSON.stringify(json.collection.map(item => item.id)) : "[]";
     }
 
     async searchArtists(args) {
       const query = Cast.toString(args.QUERY);
       const limit = Cast.toNumber(args.NUM);
-      const req   = await fetch(proxy + encodeURIComponent(`${SoundCloudAPI}search/users?q=${encodeURIComponent(query)}&client_id=${clientID}&limit=${limit}`));
-      const json  = await req.json();
+      const req   = await proxiedFetch(`${SoundCloudAPI}search/users?q=${encodeURIComponent(query)}&client_id=${clientID}&limit=${limit}`);
+      const json  = await safeJson(req);
       if (json?.collection) {
+        if (!json?.collection) return "[]";
         json.collection.forEach(artist => setCache(`artist-${artist.id}`, artist));
         return JSON.stringify(json.collection.map(item => item.id));
       }
@@ -702,8 +882,9 @@
         const artist = await this.getTrackAtt({ ID: id, THING: "artist" });
         if (!name || !artist) return "";
         const req  = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(name + " " + artist)}`);
-        const json = await req.json();
+        const json = await safeJson(req);
         if (json?.length > 0) {
+          if (!Array.isArray(json) || !json.length) return "";
           const match = json.find(item => item.syncedLyrics) || json[0];
           return match.syncedLyrics || match.plainLyrics || "";
         }
